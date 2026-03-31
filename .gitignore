@@ -1,0 +1,10 @@
+build/
+build-san/
+build-test/
+build-tidy/
+build-analyzer/
+build-check/
+bin/
+compile_commands.json
+# Fuzz corpus auto-generated files (keep only hand-written seeds)
+test/fuzz/corpus/[0-9a-f][0-9a-f]*

@@ -1,0 +1,11 @@
+# /usr/lib/systemd/system/erlkoenig.target
+#
+# Target that groups all erlkoenig runtime instances.
+# systemctl stop erlkoenig.target → stops all containers.
+
+[Unit]
+Description=Erlkoenig Container Runtime
+Documentation=https://github.com/erlkoenig/erlkoenig_rt
+
+[Install]
+WantedBy=multi-user.target

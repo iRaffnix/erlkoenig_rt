@@ -1,0 +1,23 @@
+# /usr/lib/tmpfiles.d/erlkoenig.conf
+#
+# Shared directories for the erlkoenig ecosystem.
+# Owned by erlkoenig_rt (base package). erlkoenig_ebpfd adds its own
+# tmpfiles for /run/erlkoenig/ebpf/ only.
+#
+# Applied by: systemd-tmpfiles(8)
+# Trigger:    boot, package install, or `systemd-tmpfiles --create`
+
+# Type  Path                           Mode  User  Group      Age
+
+# Shared runtime directory (sockets for rt instances + ebpfd)
+d       /run/erlkoenig                 0770  root  erlkoenig  -
+
+# Container data (EROFS images, volumes)
+d       /var/lib/erlkoenig             0750  root  erlkoenig  -
+d       /var/lib/erlkoenig/volumes     0750  root  erlkoenig  -
+
+# Logs
+d       /var/log/erlkoenig             0750  root  erlkoenig  -
+
+# cgroup delegation — runtime creates per-container subdirs
+d       /sys/fs/cgroup/erlkoenig       0770  root  erlkoenig  -

@@ -1,0 +1,12 @@
+Checks: >
+  bugprone-*,
+  cert-*,
+  -cert-err33-c,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-assignment-in-if-condition,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/erlkoenig_.*'
+FormatStyle: file

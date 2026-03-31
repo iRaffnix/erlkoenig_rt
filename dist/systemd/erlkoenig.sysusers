@@ -1,0 +1,19 @@
+# /usr/lib/sysusers.d/erlkoenig.conf
+#
+# Shared group for the erlkoenig ecosystem (erlkoenig_rt, erlkoenig_ebpfd).
+#
+# Both daemons run as root (need CAP_SYS_ADMIN, clone, mount, BPF).
+# The group controls access to shared resources:
+#   - Unix sockets in /run/erlkoenig/ (0660 root:erlkoenig)
+#   - cgroup subtrees, BPF map directories
+#
+# The Erlang orchestrator and CLI tools join this group to connect
+# to runtime and ebpfd sockets without root.
+#
+# No system user — neither daemon needs one.
+#
+# Applied by: systemd-sysusers(8)
+# Trigger:    boot, package install, or `systemd-sysusers --create`
+
+# Type  Name        ID  GECOS
+g       erlkoenig   -   -

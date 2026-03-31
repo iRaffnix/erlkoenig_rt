@@ -1,0 +1,80 @@
+# /usr/lib/systemd/system/erlkoenig-rt@.service
+#
+# Template unit for erlkoenig container runtime instances.
+# One instance per container: systemctl start erlkoenig-rt@web-1
+#
+# The instance name (%i) becomes the socket name and cgroup subdir.
+# Socket:  /run/erlkoenig/%i.sock
+# Cgroup:  delegated subtree under this unit's cgroup
+#
+# The runtime runs as root (needs clone, mount, pivot_root) but
+# the socket is accessible by the erlkoenig group.
+
+[Unit]
+Description=Erlkoenig Container Runtime (%i)
+After=network.target
+PartOf=erlkoenig.target
+
+[Service]
+Type=simple
+
+# Run as root — needs kernel privileges for namespace operations.
+# Security hardening happens inside the runtime (seccomp, landlock,
+# cap-drop after CMD_GO).
+ExecStart=/usr/lib/erlkoenig/erlkoenig_rt --socket /run/erlkoenig/%i.sock
+
+# Socket permissions: group erlkoenig can connect
+ExecStartPost=/bin/sh -c 'while [ ! -S /run/erlkoenig/%i.sock ]; do sleep 0.05; done; chgrp erlkoenig /run/erlkoenig/%i.sock; chmod 0660 /run/erlkoenig/%i.sock'
+
+# Graceful shutdown
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=3
+
+# Logging
+Environment=ERLKOENIG_LOG=info
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=erlkoenig-rt-%i
+
+# Runtime directory is created by tmpfiles.d/erlkoenig.conf with
+# correct group (root:erlkoenig 0770). We don't use RuntimeDirectory=
+# because it creates the dir as root:root when the service runs as root.
+# ExecStartPre ensures correct permissions on every start.
+ExecStartPre=/bin/sh -c 'mkdir -p /run/erlkoenig && chgrp erlkoenig /run/erlkoenig && chmod 0770 /run/erlkoenig'
+
+# cgroup delegation — runtime needs write access for container limits
+Delegate=yes
+DelegateSubgroup=%i
+
+# Resource limits for the runtime itself
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+# Security hardening:
+#
+# The runtime applies its OWN hardening after CMD_GO:
+#   1. Capabilities: only CAP_KILL retained
+#   2. Landlock: all filesystem access denied
+#   3. Seccomp: 30 syscall families blocked
+#
+# systemd seccomp directives (ProtectClock, ProtectKernelModules,
+# RestrictSUIDSGID) are NOT used here because they install seccomp
+# filters that are inherited by clone()'d children. The child needs
+# openat2, mount, pivot_root, ioctl etc. for container setup BEFORE
+# it applies its own seccomp profile. systemd's filters block these.
+#
+# Mount-namespace isolation is safe — it doesn't affect child syscalls:
+ProtectHome=yes
+PrivateTmp=yes
+# NOT set: ProtectClock (adds seccomp, blocks child)
+# NOT set: ProtectKernelModules (adds seccomp, blocks child)
+# NOT set: RestrictSUIDSGID (adds seccomp, blocks child)
+# NOT set: ProtectControlGroups (needs cgroup write access)
+# NOT set: NoNewPrivileges (needs file capabilities for clone)
+
+[Install]
+WantedBy=erlkoenig.target

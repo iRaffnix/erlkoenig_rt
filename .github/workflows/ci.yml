@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools cmake clang-format
+
+      - name: Check formatting
+        run: clang-format --dry-run --Werror src/*.c include/*.h demo/*.c
+
+      - name: Build (static musl)
+        run: make
+
+      - name: Verify binaries
+        run: |
+          file build/erlkoenig_rt | grep -q "statically linked"
+          file build/ek_rtctl | grep -q "statically linked"
+          ls -lh build/erlkoenig_rt build/ek_rtctl
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: erlkoenig_rt-${{ github.sha }}
+          path: |
+            build/erlkoenig_rt
+            build/ek_rtctl
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools cmake check erofs-utils
+
+      - name: Build runtime (static musl)
+        run: make
+
+      - name: Build unit tests (gcc, dynamic)
+        run: |
+          cmake -B build-test -DCMAKE_BUILD_TYPE=Debug \
+            -DERLKOENIG_BUILD_TESTS=ON
+          cmake --build build-test -j$(nproc)
+
+      - name: Run unit tests
+        run: sudo build-test/test/test_container_setup
+
+      - name: Run EROFS integration test
+        run: sudo ./scripts/test-erofs.sh
