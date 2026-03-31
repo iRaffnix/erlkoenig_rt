@@ -332,7 +332,8 @@ static int do_test_procfs_hidepid(void)
 	int found_hidepid = 0;
 
 	while (fgets(line, sizeof(line), f)) {
-		/* Kernel 5.8+ shows "hidepid=invisible" instead of "hidepid=2" */
+		/* Kernel 5.8+ shows "hidepid=invisible" instead of "hidepid=2"
+		 */
 		if ((strstr(line, "hidepid=2") ||
 		     strstr(line, "hidepid=invisible")) &&
 		    strstr(line, "proc"))
@@ -1167,7 +1168,8 @@ START_TEST(test_bind_mount_volume_readonly)
 		fprintf(stderr, "  SKIP (needs root)\n");
 		return;
 	}
-	ck_assert_int_eq(run_in_mount_ns(do_test_bind_mount_volume_readonly), 0);
+	ck_assert_int_eq(run_in_mount_ns(do_test_bind_mount_volume_readonly),
+			 0);
 }
 END_TEST
 
@@ -1243,9 +1245,8 @@ END_TEST
 
 START_TEST(test_bind_mount_volume_source_missing)
 {
-	int ret = ek_bind_mount_volume("/tmp",
-				       "/tmp/ek_nonexistent_vol_dir_12345",
-				       "/data", 0);
+	int ret = ek_bind_mount_volume(
+	    "/tmp", "/tmp/ek_nonexistent_vol_dir_12345", "/data", 0);
 	ck_assert_int_eq(ret, -ENOENT);
 }
 END_TEST
@@ -1478,19 +1479,14 @@ static int do_test_landlock_deny_all(void)
 	}
 
 	/* Build rights mask matching what erlkoenig_rt uses */
-	__u64 fs_rights = LANDLOCK_ACCESS_FS_EXECUTE |
-			  LANDLOCK_ACCESS_FS_WRITE_FILE |
-			  LANDLOCK_ACCESS_FS_READ_FILE |
-			  LANDLOCK_ACCESS_FS_READ_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_FILE |
-			  LANDLOCK_ACCESS_FS_MAKE_CHAR |
-			  LANDLOCK_ACCESS_FS_MAKE_DIR |
-			  LANDLOCK_ACCESS_FS_MAKE_REG |
-			  LANDLOCK_ACCESS_FS_MAKE_SOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_FIFO |
-			  LANDLOCK_ACCESS_FS_MAKE_BLOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_SYM;
+	__u64 fs_rights =
+	    LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_WRITE_FILE |
+	    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
+	    LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+	    LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_MAKE_DIR |
+	    LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_FIFO | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_SYM;
 
 	if (abi >= 2)
 		fs_rights |= LANDLOCK_ACCESS_FS_REFER;
@@ -1501,8 +1497,8 @@ static int do_test_landlock_deny_all(void)
 	    .handled_access_fs = fs_rights,
 	};
 
-	int ruleset_fd = (int)syscall(SYS_landlock_create_ruleset, &attr,
-				      sizeof(attr), 0);
+	int ruleset_fd =
+	    (int)syscall(SYS_landlock_create_ruleset, &attr, sizeof(attr), 0);
 	if (ruleset_fd < 0) {
 		close(pre_fd);
 		return 1;
@@ -1615,19 +1611,14 @@ static int do_test_landlock_pipe_survives(void)
 		return 0; /* skip */
 	}
 
-	__u64 fs_rights = LANDLOCK_ACCESS_FS_EXECUTE |
-			  LANDLOCK_ACCESS_FS_WRITE_FILE |
-			  LANDLOCK_ACCESS_FS_READ_FILE |
-			  LANDLOCK_ACCESS_FS_READ_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_FILE |
-			  LANDLOCK_ACCESS_FS_MAKE_CHAR |
-			  LANDLOCK_ACCESS_FS_MAKE_DIR |
-			  LANDLOCK_ACCESS_FS_MAKE_REG |
-			  LANDLOCK_ACCESS_FS_MAKE_SOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_FIFO |
-			  LANDLOCK_ACCESS_FS_MAKE_BLOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_SYM;
+	__u64 fs_rights =
+	    LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_WRITE_FILE |
+	    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
+	    LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+	    LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_MAKE_DIR |
+	    LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_FIFO | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_SYM;
 	if (abi >= 2)
 		fs_rights |= LANDLOCK_ACCESS_FS_REFER;
 	if (abi >= 3)
@@ -1636,8 +1627,8 @@ static int do_test_landlock_pipe_survives(void)
 	struct landlock_ruleset_attr attr = {
 	    .handled_access_fs = fs_rights,
 	};
-	int ruleset_fd = (int)syscall(SYS_landlock_create_ruleset, &attr,
-				      sizeof(attr), 0);
+	int ruleset_fd =
+	    (int)syscall(SYS_landlock_create_ruleset, &attr, sizeof(attr), 0);
 	if (ruleset_fd < 0) {
 		close(pipefd[0]);
 		close(pipefd[1]);
@@ -1712,19 +1703,14 @@ static int do_test_landlock_blocks_create(void)
 	if (abi < 0)
 		return 0; /* skip */
 
-	__u64 fs_rights = LANDLOCK_ACCESS_FS_EXECUTE |
-			  LANDLOCK_ACCESS_FS_WRITE_FILE |
-			  LANDLOCK_ACCESS_FS_READ_FILE |
-			  LANDLOCK_ACCESS_FS_READ_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_FILE |
-			  LANDLOCK_ACCESS_FS_MAKE_CHAR |
-			  LANDLOCK_ACCESS_FS_MAKE_DIR |
-			  LANDLOCK_ACCESS_FS_MAKE_REG |
-			  LANDLOCK_ACCESS_FS_MAKE_SOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_FIFO |
-			  LANDLOCK_ACCESS_FS_MAKE_BLOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_SYM;
+	__u64 fs_rights =
+	    LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_WRITE_FILE |
+	    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
+	    LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+	    LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_MAKE_DIR |
+	    LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_FIFO | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_SYM;
 	if (abi >= 2)
 		fs_rights |= LANDLOCK_ACCESS_FS_REFER;
 	if (abi >= 3)
@@ -1733,8 +1719,8 @@ static int do_test_landlock_blocks_create(void)
 	struct landlock_ruleset_attr attr = {
 	    .handled_access_fs = fs_rights,
 	};
-	int ruleset_fd = (int)syscall(SYS_landlock_create_ruleset, &attr,
-				      sizeof(attr), 0);
+	int ruleset_fd =
+	    (int)syscall(SYS_landlock_create_ruleset, &attr, sizeof(attr), 0);
 	if (ruleset_fd < 0)
 		return 1;
 
@@ -1813,8 +1799,8 @@ START_TEST(test_cgroup_pids_max)
 		fprintf(stderr, "  SKIP (needs root)\n");
 		return;
 	}
-	if (!probe_has_cgroup_v2()) {
-		fprintf(stderr, "  SKIP (needs cgroup v2)\n");
+	if (!probe_has_cgroup_delegation()) {
+		fprintf(stderr, "  SKIP (needs cgroup delegation)\n");
 		return;
 	}
 
@@ -1876,9 +1862,8 @@ START_TEST(test_cgroup_pids_max)
 
 	char cg_path[4096];
 
-	int ret = erlkoenig_cg_setup(child, "ek-test-pids",
-				     0, 5, 0,
-				     cg_path, sizeof(cg_path));
+	int ret = erlkoenig_cg_setup(child, "ek-test-pids", 0, 5, 0, cg_path,
+				     sizeof(cg_path));
 	if (ret) {
 		/* Cgroup-Setup fehlgeschlagen — Kind abbrechen */
 		close(pipefd[1]);
@@ -1930,8 +1915,8 @@ START_TEST(test_cgroup_memory_max)
 		fprintf(stderr, "  SKIP (needs root)\n");
 		return;
 	}
-	if (!probe_has_cgroup_v2()) {
-		fprintf(stderr, "  SKIP (needs cgroup v2)\n");
+	if (!probe_has_cgroup_delegation()) {
+		fprintf(stderr, "  SKIP (needs cgroup delegation)\n");
 		return;
 	}
 
@@ -1953,14 +1938,14 @@ START_TEST(test_cgroup_memory_max)
 			_exit(1);
 		close(pipefd[0]);
 
-		/*
-		 * Alloziere 1MB-Bloecke und beschreibe sie komplett
-		 * (memset erzwingt physische Seitenallokation).
-		 * Bei 32MB Limit sollte der OOM-Killer zuschlagen
-		 * oder malloc fehlschlagen.
-		 */
-		#define CHUNK_SIZE (1024 * 1024)  /* 1 MB */
-		#define MAX_CHUNKS 128            /* 128 MB max Versuch */
+/*
+ * Alloziere 1MB-Bloecke und beschreibe sie komplett
+ * (memset erzwingt physische Seitenallokation).
+ * Bei 32MB Limit sollte der OOM-Killer zuschlagen
+ * oder malloc fehlschlagen.
+ */
+#define CHUNK_SIZE (1024 * 1024) /* 1 MB */
+#define MAX_CHUNKS 128		 /* 128 MB max Versuch */
 
 		void *chunks[MAX_CHUNKS];
 		int nchunks = 0;
@@ -1996,8 +1981,7 @@ START_TEST(test_cgroup_memory_max)
 	char cg_path[4096];
 	uint64_t mem_limit = 32ULL * 1024 * 1024;
 
-	int ret = erlkoenig_cg_setup(child, "ek-test-mem",
-				     mem_limit, 0, 0,
+	int ret = erlkoenig_cg_setup(child, "ek-test-mem", mem_limit, 0, 0,
 				     cg_path, sizeof(cg_path));
 	if (ret) {
 		close(pipefd[1]);
@@ -2068,14 +2052,13 @@ static Suite *container_setup_suite(void)
 				    SIGSYS);
 	tcase_add_test_raise_signal(
 	    tc_priv, test_seccomp_default_blocks_process_vm_readv, SIGSYS);
-	tcase_add_test_raise_signal(tc_priv,
-				    test_seccomp_network_blocks_fork, SIGSYS);
+	tcase_add_test_raise_signal(tc_priv, test_seccomp_network_blocks_fork,
+				    SIGSYS);
 	tcase_add_test(tc_priv, test_seccomp_network_allows_socket);
 	tcase_add_test_raise_signal(
 	    tc_priv, test_seccomp_default_blocks_io_uring, SIGSYS);
-	tcase_add_test_raise_signal(tc_priv,
-				    test_seccomp_default_blocks_unshare,
-				    SIGSYS);
+	tcase_add_test_raise_signal(
+	    tc_priv, test_seccomp_default_blocks_unshare, SIGSYS);
 	suite_add_tcase(s, tc_priv);
 
 	/* Phase 4: Prozessmodell */

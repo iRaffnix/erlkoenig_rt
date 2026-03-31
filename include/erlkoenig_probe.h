@@ -68,6 +68,19 @@ static inline bool probe_has_cgroup_v2(void)
 	return stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0;
 }
 
+/* Can we create and configure cgroups? (needs delegation) */
+static inline bool probe_has_cgroup_delegation(void)
+{
+	if (!probe_has_cgroup_v2())
+		return false;
+	/* Try creating a test cgroup — fails on runners without delegation */
+	int ret = mkdir("/sys/fs/cgroup/erlkoenig-probe", 0755);
+	if (ret < 0 && errno != EEXIST)
+		return false;
+	rmdir("/sys/fs/cgroup/erlkoenig-probe");
+	return true;
+}
+
 /* Is Landlock available? */
 static inline bool probe_has_landlock(void)
 {
