@@ -96,8 +96,11 @@ Source of truth: [include/erlkoenig_proto.h](include/erlkoenig_proto.h)
 ## Install
 
 ```bash
+# From GitHub Release (no build required)
+curl -fsSL https://raw.githubusercontent.com/iRaffnix/erlkoenig_rt/main/scripts/install-release.sh | sudo sh
+
+# Or from source
 sudo make install
-# or: sudo ./scripts/install.sh --prefix /opt/erlkoenig
 ```
 
 Installs runtime, CLI, systemd units, sysusers/tmpfiles config.
