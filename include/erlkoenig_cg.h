@@ -47,10 +47,9 @@ int erlkoenig_cg_detect_base(char *path, size_t len);
  * Returns 0 on success, -errno on failure.
  * On failure, partially created cgroups are cleaned up.
  */
-int erlkoenig_cg_setup(pid_t pid, const char *name,
-		       uint64_t memory_max, uint32_t pids_max,
-		       uint32_t cpu_weight, char *cgroup_path_out,
-		       size_t path_len);
+int erlkoenig_cg_setup(pid_t pid, const char *name, uint64_t memory_max,
+		       uint32_t pids_max, uint32_t cpu_weight,
+		       char *cgroup_path_out, size_t path_len);
 
 /*
  * Tear down a container's cgroup.

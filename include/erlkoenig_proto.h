@@ -50,55 +50,55 @@ _Static_assert(sizeof(uint64_t) == 8, "protocol assumes 8-byte uint64");
 #define ERLKOENIG_PROTOCOL_VERSION 1
 
 /* -- SPAWN TLV attribute types ------------------------------------ */
-#define EK_ATTR_PATH		1  /* bytes, required */
-#define EK_ATTR_UID		2  /* uint32, required */
-#define EK_ATTR_GID		3  /* uint32, required */
-#define EK_ATTR_CAPS		4  /* uint64, optional */
-#define EK_ATTR_ARG		5  /* bytes, repeated */
-#define EK_ATTR_FLAGS		6  /* uint32, optional */
-#define EK_ATTR_ENV		7  /* bytes "key\0val", repeated */
-#define EK_ATTR_ROOTFS_MB	8  /* uint32, optional */
-#define EK_ATTR_SECCOMP		9  /* uint8, optional */
-#define EK_ATTR_DNS_IP		10 /* uint32, optional */
-#define EK_ATTR_VOLUME		11 /* bytes, repeated */
-#define EK_ATTR_MEMORY_MAX	12 /* uint64, optional */
-#define EK_ATTR_PIDS_MAX	13 /* uint32, optional */
-#define EK_ATTR_CPU_WEIGHT	14 /* uint32, optional */
-#define EK_ATTR_IMAGE_PATH	15 /* bytes, optional — EROFS image path */
+#define EK_ATTR_PATH	   1  /* bytes, required */
+#define EK_ATTR_UID	   2  /* uint32, required */
+#define EK_ATTR_GID	   3  /* uint32, required */
+#define EK_ATTR_CAPS	   4  /* uint64, optional */
+#define EK_ATTR_ARG	   5  /* bytes, repeated */
+#define EK_ATTR_FLAGS	   6  /* uint32, optional */
+#define EK_ATTR_ENV	   7  /* bytes "key\0val", repeated */
+#define EK_ATTR_ROOTFS_MB  8  /* uint32, optional */
+#define EK_ATTR_SECCOMP	   9  /* uint8, optional */
+#define EK_ATTR_DNS_IP	   10 /* uint32, optional */
+#define EK_ATTR_VOLUME	   11 /* bytes, repeated */
+#define EK_ATTR_MEMORY_MAX 12 /* uint64, optional */
+#define EK_ATTR_PIDS_MAX   13 /* uint32, optional */
+#define EK_ATTR_CPU_WEIGHT 14 /* uint32, optional */
+#define EK_ATTR_IMAGE_PATH 15 /* bytes, optional — EROFS image path */
 
 /* KILL attribute */
-#define EK_ATTR_SIGNAL		1  /* uint8, required */
+#define EK_ATTR_SIGNAL 1 /* uint8, required */
 
 /* NET_SETUP attributes */
-#define EK_ATTR_IFNAME		1  /* bytes, required */
-#define EK_ATTR_CONTAINER_IP	2  /* uint32, required */
-#define EK_ATTR_GATEWAY_IP	3  /* uint32, required */
-#define EK_ATTR_PREFIXLEN	4  /* uint8, optional */
+#define EK_ATTR_IFNAME	     1 /* bytes, required */
+#define EK_ATTR_CONTAINER_IP 2 /* uint32, required */
+#define EK_ATTR_GATEWAY_IP   3 /* uint32, required */
+#define EK_ATTR_PREFIXLEN    4 /* uint8, optional */
 
 /* WRITE_FILE attributes */
-#define EK_ATTR_FILE_PATH	1  /* bytes, required */
-#define EK_ATTR_CONTENT		2  /* bytes, required */
-#define EK_ATTR_FILE_MODE	3  /* uint32, optional */
+#define EK_ATTR_FILE_PATH 1 /* bytes, required */
+#define EK_ATTR_CONTENT	  2 /* bytes, required */
+#define EK_ATTR_FILE_MODE 3 /* uint32, optional */
 
 /* RESIZE attributes */
-#define EK_ATTR_ROWS		1  /* uint16, required */
-#define EK_ATTR_COLS		2  /* uint16, required */
+#define EK_ATTR_ROWS 1 /* uint16, required */
+#define EK_ATTR_COLS 2 /* uint16, required */
 
 /* DEVICE_FILTER / METRICS_START attributes */
-#define EK_ATTR_CGROUP_PATH	1  /* bytes, required */
-#define EK_ATTR_DEV_RULE	2  /* bytes, repeated */
+#define EK_ATTR_CGROUP_PATH 1 /* bytes, required */
+#define EK_ATTR_DEV_RULE    2 /* bytes, repeated */
 
 /* Reply attributes (per-reply type numbers) */
-#define EK_ATTR_DATA		1  /* bytes (OK) */
-#define EK_ATTR_CODE		1  /* int32 (ERROR) */
-#define EK_ATTR_MESSAGE		2  /* bytes (ERROR) */
-#define EK_ATTR_PID		1  /* uint32 (CONTAINER_PID, STATUS) */
-#define EK_ATTR_NETNS_PATH	2  /* bytes (CONTAINER_PID) */
-#define EK_ATTR_EXIT_CODE	1  /* int32 (EXITED) */
-#define EK_ATTR_TERM_SIGNAL	2  /* uint8 (EXITED) */
-#define EK_ATTR_STATE		1  /* uint8 (STATUS) */
-#define EK_ATTR_UPTIME_MS	3  /* uint64 (STATUS) */
-#define EK_ATTR_EVENT_DATA	1  /* bytes (METRICS_EVENT) */
+#define EK_ATTR_DATA	    1 /* bytes (OK) */
+#define EK_ATTR_CODE	    1 /* int32 (ERROR) */
+#define EK_ATTR_MESSAGE	    2 /* bytes (ERROR) */
+#define EK_ATTR_PID	    1 /* uint32 (CONTAINER_PID, STATUS) */
+#define EK_ATTR_NETNS_PATH  2 /* bytes (CONTAINER_PID) */
+#define EK_ATTR_EXIT_CODE   1 /* int32 (EXITED) */
+#define EK_ATTR_TERM_SIGNAL 2 /* uint8 (EXITED) */
+#define EK_ATTR_STATE	    1 /* uint8 (STATUS) */
+#define EK_ATTR_UPTIME_MS   3 /* uint64 (STATUS) */
+#define EK_ATTR_EVENT_DATA  1 /* bytes (METRICS_EVENT) */
 
 /* -- Reply tags (C -> Erlang, 0x01-0x0F) -------------------------- */
 

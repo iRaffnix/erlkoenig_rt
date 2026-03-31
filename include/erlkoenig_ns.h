@@ -91,12 +91,14 @@ struct erlkoenig_spawn_opts {
 	uint64_t memory_max;
 	uint32_t pids_max;
 	uint32_t cpu_weight;
-	char image_path[ERLKOENIG_MAX_PATH]; /* EROFS image, empty = tmpfs mode */
+	char image_path[ERLKOENIG_MAX_PATH]; /* EROFS image, empty = tmpfs mode
+					      */
 };
 
 /*
  * struct erlkoenig_container - State of a running container.
- * @child_pid:		PID in the host PID namespace (for /proc paths + logging)
+ * @child_pid:		PID in the host PID namespace (for /proc paths +
+ * logging)
  * @child_pidfd:	pidfd for the child (-1 if unavailable, kernel < 5.3)
  * @go_pipe:		Write-end of GO pipe (-1 after GO sent)
  * @stdout_fd:		Read-end of child stdout pipe (-1 if closed)

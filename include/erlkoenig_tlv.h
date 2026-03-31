@@ -28,7 +28,7 @@
 
 #include "erlkoenig_buf.h"
 
-#define EK_TLV_HDR_SIZE	4 /* Type(2) + Len(2) */
+#define EK_TLV_HDR_SIZE	    4 /* Type(2) + Len(2) */
 #define EK_TLV_CRITICAL_BIT 0x8000
 
 /* Parsed TLV attribute */
@@ -89,10 +89,10 @@ static inline uint64_t ek_tlv_u64(const struct ek_tlv *a)
 {
 	if (a->len < 8)
 		return 0;
-	return (uint64_t)ek_tlv_u32(&(struct ek_tlv){
-		       .value = a->value, .len = 4}) << 32 |
-	       ek_tlv_u32(
-		   &(struct ek_tlv){.value = a->value + 4, .len = 4});
+	return (uint64_t)ek_tlv_u32(
+		   &(struct ek_tlv){.value = a->value, .len = 4})
+		   << 32 |
+	       ek_tlv_u32(&(struct ek_tlv){.value = a->value + 4, .len = 4});
 }
 
 /* -- TLV Writers -------------------------------------------------- */

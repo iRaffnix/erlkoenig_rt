@@ -78,14 +78,14 @@
 static int ek_openat2(int dirfd, const char *path, int flags, mode_t mode)
 {
 	struct open_how how = {
-		.flags = (uint64_t)(unsigned int)flags,
-		.mode = (uint64_t)mode,
-		.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS,
-		/* Note: RESOLVE_NO_XDEV removed — OverlayFS merges
-		 * multiple filesystems (EROFS lower + tmpfs upper),
-		 * and NO_XDEV blocks cross-device lookups which are
-		 * normal on overlay mounts. RESOLVE_IN_ROOT alone
-		 * prevents path escape. */
+	    .flags = (uint64_t)(unsigned int)flags,
+	    .mode = (uint64_t)mode,
+	    .resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS,
+	    /* Note: RESOLVE_NO_XDEV removed — OverlayFS merges
+	     * multiple filesystems (EROFS lower + tmpfs upper),
+	     * and NO_XDEV blocks cross-device lookups which are
+	     * normal on overlay mounts. RESOLVE_IN_ROOT alone
+	     * prevents path escape. */
 	};
 
 	int fd = (int)syscall(SYS_openat2, dirfd, path, &how, sizeof(how));
@@ -238,7 +238,7 @@ static pid_t try_clone3(int (*fn)(void *), void *arg, int clone_flags,
 	} while (0)
 
 struct child_args {
-	int sync_pipe_rd;  /* Receives rootfs base path from parent */
+	int sync_pipe_rd; /* Receives rootfs base path from parent */
 	int go_pipe_rd;
 	int ready_pipe_wr; /* Child writes 'R' after pivot_root + ro remount */
 	int stdout_wr;	   /* -1 in PTY mode */
@@ -296,8 +296,7 @@ int ek_bind_mount_dev(const char *rootfs, int rootfs_fd, const char *name,
 	/* Create empty mount target via openat2 (RESOLVE_IN_ROOT) */
 	{
 		_cleanup_close_ int fd = ek_openat2(
-		    rootfs_fd, devpath,
-		    O_CREAT | O_WRONLY | O_CLOEXEC, mode);
+		    rootfs_fd, devpath, O_CREAT | O_WRONLY | O_CLOEXEC, mode);
 		if (fd < 0) {
 			LOG_SYSCALL("openat2(dev)");
 			return -errno;
@@ -548,8 +547,8 @@ static int prepare_rootfs_erofs(const char *rootfs,
 	 * to avoid kernel lock contention (LOOP_CTL_GET_FREE is serialized)
 	 * in the child's critical path. We just mount it.
 	 */
-	ret = ek_mount(loop_dev, lower, "erofs", MS_RDONLY, NULL,
-		       "mount(erofs)");
+	ret =
+	    ek_mount(loop_dev, lower, "erofs", MS_RDONLY, NULL, "mount(erofs)");
 	if (ret) {
 		LOG_ERR("EROFS mount failed: %s → %s", opts->image_path, lower);
 		return ret;
@@ -588,8 +587,7 @@ static int prepare_rootfs_erofs(const char *rootfs,
 
 	/* 5. Create device dirs and mount points in the merged view */
 	{
-		_cleanup_close_ int rfd =
-		    open(rootfs, O_DIRECTORY | O_CLOEXEC);
+		_cleanup_close_ int rfd = open(rootfs, O_DIRECTORY | O_CLOEXEC);
 		if (rfd < 0)
 			return -errno;
 
@@ -613,8 +611,7 @@ static int prepare_rootfs_erofs(const char *rootfs,
 			snprintf(devdir, sizeof(devdir), "%s/dev", rootfs);
 			ret = ek_mount("tmpfs", devdir, "tmpfs",
 				       MS_NOSUID | MS_NOEXEC,
-				       "size=64k,mode=0755",
-				       "mount(devtmpfs)");
+				       "size=64k,mode=0755", "mount(devtmpfs)");
 			if (ret)
 				return ret;
 
@@ -624,10 +621,10 @@ static int prepare_rootfs_erofs(const char *rootfs,
 				unsigned int major;
 				unsigned int minor;
 			} devs[] = {
-				{"null",    0666 | S_IFCHR, 1, 3},
-				{"zero",    0666 | S_IFCHR, 1, 5},
-				{"random",  0444 | S_IFCHR, 1, 8},
-				{"urandom", 0444 | S_IFCHR, 1, 9},
+			    {"null", 0666 | S_IFCHR, 1, 3},
+			    {"zero", 0666 | S_IFCHR, 1, 5},
+			    {"random", 0444 | S_IFCHR, 1, 8},
+			    {"urandom", 0444 | S_IFCHR, 1, 9},
 			};
 			for (size_t d = 0; d < 4; d++) {
 				char path[ERLKOENIG_ROOTFS_MAX + 32];
@@ -673,8 +670,8 @@ static int prepare_rootfs_erofs(const char *rootfs,
 	}
 
 	/* No binary copy needed — /app is in the EROFS image */
-	LOG_INFO("EROFS rootfs ready: image=%s merged=%s",
-		 opts->image_path, rootfs);
+	LOG_INFO("EROFS rootfs ready: image=%s merged=%s", opts->image_path,
+		 rootfs);
 
 	umount_guard = NULL; /* success */
 	return 0;
@@ -760,10 +757,8 @@ static int prepare_rootfs_in_child(const char *rootfs,
 	{
 		char devdir[ERLKOENIG_ROOTFS_MAX + 16];
 		snprintf(devdir, sizeof(devdir), "%s/dev", rootfs);
-		ret = ek_mount("tmpfs", devdir, "tmpfs",
-			       MS_NOSUID | MS_NOEXEC,
-			       "size=64k,mode=0755",
-			       "mount(devtmpfs)");
+		ret = ek_mount("tmpfs", devdir, "tmpfs", MS_NOSUID | MS_NOEXEC,
+			       "size=64k,mode=0755", "mount(devtmpfs)");
 		if (ret)
 			return ret;
 
@@ -773,18 +768,17 @@ static int prepare_rootfs_in_child(const char *rootfs,
 			unsigned int major;
 			unsigned int minor;
 		} devs[] = {
-			{"null",    0666 | S_IFCHR, 1, 3},
-			{"zero",    0666 | S_IFCHR, 1, 5},
-			{"random",  0444 | S_IFCHR, 1, 8},
-			{"urandom", 0444 | S_IFCHR, 1, 9},
+		    {"null", 0666 | S_IFCHR, 1, 3},
+		    {"zero", 0666 | S_IFCHR, 1, 5},
+		    {"random", 0444 | S_IFCHR, 1, 8},
+		    {"urandom", 0444 | S_IFCHR, 1, 9},
 		};
 		for (size_t d = 0; d < 4; d++) {
 			char path[ERLKOENIG_ROOTFS_MAX + 32];
-			snprintf(path, sizeof(path), "%s/dev/%s",
-				 rootfs, devs[d].name);
+			snprintf(path, sizeof(path), "%s/dev/%s", rootfs,
+				 devs[d].name);
 			if (mknod(path, devs[d].mode,
-				  makedev(devs[d].major,
-					  devs[d].minor))) {
+				  makedev(devs[d].major, devs[d].minor))) {
 				LOG_SYSCALL("mknod(dev)");
 				return -errno;
 			}
@@ -802,9 +796,9 @@ static int prepare_rootfs_in_child(const char *rootfs,
 
 	/* Create /etc/resolv.conf via openat2 (RESOLVE_IN_ROOT) */
 	{
-		_cleanup_close_ int fd = ek_openat2(
-		    rfd, "etc/resolv.conf",
-		    O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
+		_cleanup_close_ int fd =
+		    ek_openat2(rfd, "etc/resolv.conf",
+			       O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
 		if (fd < 0) {
 			LOG_SYSCALL("openat2(etc/resolv.conf)");
 			return -errno;
@@ -972,8 +966,8 @@ int ek_mask_paths(void)
 			  MS_BIND | MS_RDONLY, NULL) == 0) {
 			/* Remount bind read-only (best-effort) */
 			mount(NULL, masked_paths[i], NULL,
-			      MS_REMOUNT | MS_BIND | MS_RDONLY |
-				  MS_NOSUID | MS_NODEV | MS_NOEXEC,
+			      MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID |
+				  MS_NODEV | MS_NOEXEC,
 			      NULL);
 			continue;
 		}
@@ -1246,7 +1240,7 @@ static int child_init(void *arg)
 		close_safe(ca->binary_fd); /* not needed in image mode */
 	} else {
 		ret = prepare_rootfs_in_child(rootfs, opts, ca->binary_fd,
-					     ca->rootfs_fd);
+					      ca->rootfs_fd);
 		close_safe(ca->binary_fd);
 	}
 	if (ret) {
@@ -1597,8 +1591,8 @@ int erlkoenig_spawn(const struct erlkoenig_spawn_opts *opts,
 		 */
 		if (access(opts->image_path, R_OK)) {
 			ret = -errno;
-			LOG_ERR("image not readable: %s (%s)",
-				opts->image_path, strerror(errno));
+			LOG_ERR("image not readable: %s (%s)", opts->image_path,
+				strerror(errno));
 			return ret;
 		}
 
@@ -1615,8 +1609,8 @@ int erlkoenig_spawn(const struct erlkoenig_spawn_opts *opts,
 			LOG_SYSCALL("LOOP_CTL_GET_FREE");
 			return ret;
 		}
-		snprintf(ca.loop_dev, sizeof(ca.loop_dev),
-			 "/dev/loop%d", loop_nr);
+		snprintf(ca.loop_dev, sizeof(ca.loop_dev), "/dev/loop%d",
+			 loop_nr);
 
 		int loop_fd = open(ca.loop_dev, O_RDWR | O_CLOEXEC);
 		if (loop_fd < 0) {

@@ -34,7 +34,7 @@
  */
 
 /* ALU/ALU64 with immediate */
-#define BPF_I(CODE, DST, SRC, OFF, IMM)                                       \
+#define BPF_I(CODE, DST, SRC, OFF, IMM)                                        \
 	((struct bpf_insn){.code = (CODE),                                     \
 			   .dst_reg = (DST),                                   \
 			   .src_reg = (SRC),                                   \
@@ -74,12 +74,10 @@
 	BPF_I(BPF_JMP | (OP) | BPF_K, DST, 0, (short)(OFF), (int)(IMM))
 
 /* Helper function call: r0 = helper(r1, r2, r3, r4, r5) */
-#define INSN_CALL(HELPER)                                                      \
-	BPF_I(BPF_JMP | BPF_CALL, 0, 0, 0, (int)(HELPER))
+#define INSN_CALL(HELPER) BPF_I(BPF_JMP | BPF_CALL, 0, 0, 0, (int)(HELPER))
 
 /* Program exit: return r0 */
-#define INSN_EXIT()                                                            \
-	BPF_I(BPF_JMP | BPF_EXIT, 0, 0, 0, 0)
+#define INSN_EXIT() BPF_I(BPF_JMP | BPF_EXIT, 0, 0, 0, 0)
 
 /*
  * Load map FD into register — takes TWO instruction slots.
@@ -87,8 +85,8 @@
  * BPF_PSEUDO_MAP_FD (1) tells the verifier this is a map reference.
  */
 #define INSN_LD_MAP_FD(DST, FD)                                                \
-	BPF_I(BPF_LD | BPF_DW | BPF_IMM, DST, 1 /* BPF_PSEUDO_MAP_FD */,     \
-	      0, (int)(FD)),                                                   \
+	BPF_I(BPF_LD | BPF_DW | BPF_IMM, DST, 1 /* BPF_PSEUDO_MAP_FD */, 0,    \
+	      (int)(FD)),                                                      \
 	    BPF_I(0, 0, 0, 0, (int)((uint64_t)(FD) >> 32))
 
 /* 64-bit ALU with register: dst OP= src */
@@ -96,8 +94,7 @@
 	BPF_I(BPF_ALU64 | (OP) | BPF_X, DST, SRC, 0, 0)
 
 /* 32-bit ALU with register: dst OP= src (zero-extends result to 64-bit) */
-#define INSN_ALU_REG(OP, DST, SRC)                                             \
-	BPF_I(BPF_ALU | (OP) | BPF_X, DST, SRC, 0, 0)
+#define INSN_ALU_REG(OP, DST, SRC) BPF_I(BPF_ALU | (OP) | BPF_X, DST, SRC, 0, 0)
 
 /* BPF ALU ops we need beyond BPF_ADD/BPF_MOV */
 #ifndef BPF_XOR
@@ -112,16 +109,16 @@
 #define BPF_FUNC_redirect	 23
 
 /* BPF registers */
-#define R0 0
-#define R1 1
-#define R2 2
-#define R3 3
-#define R4 4
-#define R5 5
-#define R6 6
-#define R7 7
-#define R8 8
-#define R9 9
+#define R0  0
+#define R1  1
+#define R2  2
+#define R3  3
+#define R4  4
+#define R5  5
+#define R6  6
+#define R7  7
+#define R8  8
+#define R9  9
 #define R10 10
 
 /* Ethernet / IPv4 constants */
@@ -154,25 +151,25 @@
  * Route map:   {dst_ip}           → {ifindex}  (existing L3 steering)
  */
 struct xdp_svc_key {
-	uint32_t vip;		/* VIP in network byte order */
-	uint16_t port;		/* destination port, NBO */
-	uint8_t  proto;		/* IPPROTO_TCP(6) / IPPROTO_UDP(17) */
-	uint8_t  _pad;
-};  /* 8 bytes, naturally aligned */
+	uint32_t vip;  /* VIP in network byte order */
+	uint16_t port; /* destination port, NBO */
+	uint8_t proto; /* IPPROTO_TCP(6) / IPPROTO_UDP(17) */
+	uint8_t _pad;
+}; /* 8 bytes, naturally aligned */
 
 struct xdp_svc_val {
 	uint32_t svc_id;	/* service identifier (auto-assigned) */
-	uint32_t backend_count;	/* number of active backends */
-};  /* 8 bytes */
+	uint32_t backend_count; /* number of active backends */
+}; /* 8 bytes */
 
 struct xdp_backend_key {
-	uint32_t svc_id;	/* matches xdp_svc_val.svc_id */
-	uint32_t slot;		/* 0 .. backend_count-1 */
-};  /* 8 bytes */
+	uint32_t svc_id; /* matches xdp_svc_val.svc_id */
+	uint32_t slot;	 /* 0 .. backend_count-1 */
+}; /* 8 bytes */
 
 struct xdp_backend_val {
-	uint32_t ifindex;	/* veth interface index */
-};  /* 4 bytes */
+	uint32_t ifindex; /* veth interface index */
+}; /* 4 bytes */
 
 /*
  * XDP steering program — L4 DSR with L3 fallback.
@@ -271,7 +268,8 @@ static struct bpf_insn xdp_steering_prog[] = {
     /* [16] r4 = *(u16 *)(data + 36) — dst_port, NBO */
     INSN_LDX_MEM(BPF_H, R4, R7, L4_DPORT_OFF),
 
-    /* --- Build service key on stack: {vip:u32, port:u16, proto:u8, pad:u8} --- */
+    /* --- Build service key on stack: {vip:u32, port:u16, proto:u8, pad:u8} ---
+     */
 
     /* [17] stack[-16] = dst_ip (vip) */
     INSN_STX_MEM(BPF_W, R10, R2, -16),
@@ -335,7 +333,8 @@ static struct bpf_insn xdp_steering_prog[] = {
     /* [36] r1 ^= dst_port */
     INSN_ALU64_REG(BPF_XOR, R1, R2),
 
-    /* [37] slot = hash % backend_count (32-bit ALU to avoid div-by-zero width issues) */
+    /* [37] slot = hash % backend_count (32-bit ALU to avoid div-by-zero width
+       issues) */
     INSN_ALU_REG(BPF_MOD, R1, R3),
 
     /* --- Build backend key: {svc_id:u32, slot:u32} --- */
@@ -419,8 +418,9 @@ static struct bpf_insn xdp_steering_prog[] = {
  * Map FD patch indices — each INSN_LD_MAP_FD takes 2 instruction slots.
  * Patch the first slot's .imm field with the real map FD.
  */
-#define XDP_SVC_MAP_FD_IDX     21  /* service_map: {vip,port,proto} → {svc_id,count} */
-#define XDP_BACKEND_MAP_FD_IDX 40  /* backend_map: {svc_id,slot} → {ifindex} */
-#define XDP_ROUTE_MAP_FD_IDX   50  /* route_map: {dst_ip} → {ifindex} */
+#define XDP_SVC_MAP_FD_IDX                                                     \
+	21 /* service_map: {vip,port,proto} → {svc_id,count} */
+#define XDP_BACKEND_MAP_FD_IDX 40 /* backend_map: {svc_id,slot} → {ifindex} */
+#define XDP_ROUTE_MAP_FD_IDX   50 /* route_map: {dst_ip} → {ifindex} */
 
 #endif /* ERLKOENIG_XDP_H */

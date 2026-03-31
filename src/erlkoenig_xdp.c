@@ -51,10 +51,10 @@
  * shared across all containers.
  */
 struct ek_xdp_state {
-	int map_fd;	/* BPF hash map fd (-1 if not initialized) */
-	int prog_fd;	/* BPF program fd (-1 if not loaded) */
-	int link_fd;	/* BPF link fd (-1 if not attached) — MUST stay open */
-	int ifindex;	/* Host interface index (0 if not attached) */
+	int map_fd;  /* BPF hash map fd (-1 if not initialized) */
+	int prog_fd; /* BPF program fd (-1 if not loaded) */
+	int link_fd; /* BPF link fd (-1 if not attached) — MUST stay open */
+	int ifindex; /* Host interface index (0 if not attached) */
 	char ifname[IF_NAMESIZE];
 };
 
@@ -79,7 +79,7 @@ static inline int sys_bpf(int cmd, union bpf_attr *attr, unsigned int size)
  * Returns map fd on success, -errno on failure.
  */
 static int ek_bpf_create_map(uint32_t key_size, uint32_t value_size,
-			      uint32_t max_entries)
+			     uint32_t max_entries)
 {
 	union bpf_attr attr;
 
@@ -105,7 +105,7 @@ static int ek_bpf_create_map(uint32_t key_size, uint32_t value_size,
  * Returns program fd on success, -errno on failure.
  */
 static int ek_bpf_load_xdp(struct bpf_insn *insns, size_t insn_count,
-			    int route_fd, int svc_fd, int backend_fd)
+			   int route_fd, int svc_fd, int backend_fd)
 {
 	union bpf_attr attr;
 	char log_buf[4096];
@@ -123,8 +123,9 @@ static int ek_bpf_load_xdp(struct bpf_insn *insns, size_t insn_count,
 
 	/* Runtime check: route map index points to LD_MAP_FD instruction */
 	if (insns[XDP_ROUTE_MAP_FD_IDX].src_reg != 1) {
-		LOG_ERR("xdp: ROUTE_MAP_FD_IDX %d is not a LD_MAP_FD instruction",
-			XDP_ROUTE_MAP_FD_IDX);
+		LOG_ERR(
+		    "xdp: ROUTE_MAP_FD_IDX %d is not a LD_MAP_FD instruction",
+		    XDP_ROUTE_MAP_FD_IDX);
 		return -EINVAL;
 	}
 
@@ -231,8 +232,8 @@ static int ek_xdp_attach(int ifindex, int prog_fd, uint32_t flags)
 		return -errno;
 	}
 	if (pid == 0) {
-		execlp("ip", "ip", "link", "set", "dev", if_str,
-		       "xdpgeneric", "pinned", pin_path, (char *)NULL);
+		execlp("ip", "ip", "link", "set", "dev", if_str, "xdpgeneric",
+		       "pinned", pin_path, (char *)NULL);
 		_exit(127);
 	}
 
@@ -267,8 +268,8 @@ static int ek_xdp_detach(int ifindex)
 		return -errno;
 	if (pid == 0) {
 		/* Remove both native and generic XDP */
-		execlp("ip", "ip", "link", "set", "dev", if_str,
-		       "xdpgeneric", "off", "xdp", "off", (char *)NULL);
+		execlp("ip", "ip", "link", "set", "dev", if_str, "xdpgeneric",
+		       "off", "xdp", "off", (char *)NULL);
 		_exit(127);
 	}
 
@@ -324,14 +325,14 @@ int ek_xdp_init(const char *ifname)
 	 * Create service_map and backend_map (empty, needed by the shared
 	 * XDP program which also supports L4 DSR via ek_ebpfd).
 	 */
-	int svc_fd = ek_bpf_create_map(
-		sizeof(struct xdp_svc_key), sizeof(struct xdp_svc_val), 256);
+	int svc_fd = ek_bpf_create_map(sizeof(struct xdp_svc_key),
+				       sizeof(struct xdp_svc_val), 256);
 	if (svc_fd < 0) {
 		close(map_fd);
 		return svc_fd;
 	}
-	int backend_fd = ek_bpf_create_map(
-		sizeof(struct xdp_backend_key), sizeof(struct xdp_backend_val), 256);
+	int backend_fd = ek_bpf_create_map(sizeof(struct xdp_backend_key),
+					   sizeof(struct xdp_backend_val), 256);
 	if (backend_fd < 0) {
 		close(svc_fd);
 		close(map_fd);
@@ -344,8 +345,8 @@ int ek_xdp_init(const char *ifname)
 	memcpy(insns, xdp_steering_prog, sizeof(insns));
 
 	/* Load XDP program (patches all three map fds) */
-	int prog_fd = ek_bpf_load_xdp(insns, XDP_STEERING_PROG_LEN,
-				       map_fd, svc_fd, backend_fd);
+	int prog_fd = ek_bpf_load_xdp(insns, XDP_STEERING_PROG_LEN, map_fd,
+				      svc_fd, backend_fd);
 
 	if (prog_fd < 0) {
 		close(backend_fd);
@@ -372,8 +373,9 @@ int ek_xdp_init(const char *ifname)
 	snprintf(g_xdp.ifname, sizeof(g_xdp.ifname), "%s", ifname);
 
 	/* WARN level so it's visible without ERLKOENIG_LOG=info */
-	LOG_WARN("xdp: steering active on %s (ifindex=%d, map_fd=%d, prog_fd=%d)",
-		 ifname, (int)idx, map_fd, prog_fd);
+	LOG_WARN(
+	    "xdp: steering active on %s (ifindex=%d, map_fd=%d, prog_fd=%d)",
+	    ifname, (int)idx, map_fd, prog_fd);
 
 	return 0;
 }
@@ -407,8 +409,8 @@ int ek_xdp_add_route(uint32_t ip_net_order, uint32_t ifindex)
 
 	uint8_t *ip = (uint8_t *)&ip_net_order;
 
-	LOG_INFO("xdp: route added %u.%u.%u.%u → ifindex %u",
-		 ip[0], ip[1], ip[2], ip[3], ifindex);
+	LOG_INFO("xdp: route added %u.%u.%u.%u → ifindex %u", ip[0], ip[1],
+		 ip[2], ip[3], ifindex);
 
 	return 0;
 }
@@ -439,8 +441,7 @@ int ek_xdp_del_route(uint32_t ip_net_order)
 
 	uint8_t *ip = (uint8_t *)&ip_net_order;
 
-	LOG_INFO("xdp: route removed %u.%u.%u.%u", ip[0], ip[1], ip[2],
-		 ip[3]);
+	LOG_INFO("xdp: route removed %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
 
 	return 0;
 }

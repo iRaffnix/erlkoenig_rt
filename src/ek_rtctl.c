@@ -348,8 +348,8 @@ static int cmd_simple(int fd, uint8_t tag)
 	return (reply[0] == ERLKOENIG_TAG_REPLY_OK ||
 		reply[0] == ERLKOENIG_TAG_REPLY_STATUS ||
 		reply[0] == ERLKOENIG_TAG_REPLY_READY)
-		       ? 0
-		       : 1;
+		   ? 0
+		   : 1;
 }
 
 static int cmd_kill(int fd, uint8_t sig)

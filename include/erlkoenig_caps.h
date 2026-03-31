@@ -107,8 +107,7 @@ static int erlkoenig_drop_caps(uint64_t keep_mask)
 				return -errno;
 			}
 		} else {
-			LOG_ERR("capget(read permitted): %s",
-				strerror(errno));
+			LOG_ERR("capget(read permitted): %s", strerror(errno));
 			return -errno;
 		}
 	}

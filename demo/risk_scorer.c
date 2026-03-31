@@ -28,7 +28,8 @@
  * PG wire protocol v3:
  * - StartupMessage: length(4) + version(4) + "user\0val\0database\0val\0\0"
  * - Query: 'Q' + length(4) + sql\0
- * - Response: 'T' (RowDescription) + 'D' (DataRow) + 'C' (CommandComplete) + 'Z' (ReadyForQuery)
+ * - Response: 'T' (RowDescription) + 'D' (DataRow) + 'C' (CommandComplete) +
+ * 'Z' (ReadyForQuery)
  * - AuthOk: 'R' + length(4) + status(4)=0
  */
 
@@ -41,8 +42,8 @@ static int pg_connect(const char *host, int port, const char *user,
 		return -1;
 
 	struct sockaddr_in addr = {
-		.sin_family = AF_INET,
-		.sin_port = htons((uint16_t)port),
+	    .sin_family = AF_INET,
+	    .sin_port = htons((uint16_t)port),
 	};
 	inet_pton(AF_INET, host, &addr.sin_addr);
 
@@ -53,7 +54,7 @@ static int pg_connect(const char *host, int port, const char *user,
 
 	/* StartupMessage: version 3.0 + params */
 	char buf[512];
-	int pos = 4; /* skip length, fill later */
+	int pos = 4;			      /* skip length, fill later */
 	uint32_t version = htonl(0x00030000); /* 3.0 */
 
 	memcpy(buf + pos, &version, 4);
@@ -195,7 +196,8 @@ static int pg_query(int fd, const char *sql, char *result, size_t result_sz)
 
 					if (rpos + copy >= result_sz - 1)
 						copy = result_sz - rpos - 1;
-					memcpy(result + rpos, resp + fpos, copy);
+					memcpy(result + rpos, resp + fpos,
+					       copy);
 					rpos += copy;
 					fpos += flen;
 				} else if (flen == -1) {
@@ -216,9 +218,9 @@ static int pg_query(int fd, const char *sql, char *result, size_t result_sz)
 
 /* --- Risk scoring logic --- */
 
-static double compute_risk(double amount, double avg_amount,
-			   double max_amount, const char *tx_country,
-			   const char *cust_country, const char *risk_tier)
+static double compute_risk(double amount, double avg_amount, double max_amount,
+			   const char *tx_country, const char *cust_country,
+			   const char *risk_tier)
 {
 	double score = 0.0;
 
@@ -265,8 +267,7 @@ static double compute_risk(double amount, double avg_amount,
 int main(int argc, char **argv)
 {
 	if (argc < 4) {
-		fprintf(stderr,
-			"Usage: %s <customer_id> <amount> <country>\n",
+		fprintf(stderr, "Usage: %s <customer_id> <amount> <country>\n",
 			argv[0]);
 		return 1;
 	}
@@ -331,9 +332,8 @@ int main(int argc, char **argv)
 	close(db);
 
 	/* Compute risk score */
-	double score =
-		compute_risk(amount, avg_amount, max_amount, tx_country,
-			     cust_country, tier);
+	double score = compute_risk(amount, avg_amount, max_amount, tx_country,
+				    cust_country, tier);
 
 	const char *verdict = "approve";
 

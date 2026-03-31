@@ -114,9 +114,10 @@ static struct {
 	int stderr_open;	       /* 1 if stderr pipe still readable */
 	int pty_open;		       /* 1 if pty_master still readable */
 	struct ek_metrics_ctx metrics; /* eBPF tracepoint metrics */
-	int exit_pending; /* 1 if child exited while disconnected */
-	char cgroup_path[4096];	      /* per-container cgroup path */
-	uint32_t container_ip_net;    /* Container IP (network byte order, for XDP cleanup) */
+	int exit_pending;	   /* 1 if child exited while disconnected */
+	char cgroup_path[4096];	   /* per-container cgroup path */
+	uint32_t container_ip_net; /* Container IP (network byte order, for XDP
+				      cleanup) */
 } g_state;
 
 /*
@@ -145,8 +146,8 @@ static pid_t ct_waitpid(int *status, int options)
 		siginfo_t info;
 
 		memset(&info, 0, sizeof(info));
-		int ret = waitid(P_PIDFD, (id_t)g_state.ct.child_pidfd,
-				 &info, WEXITED | options);
+		int ret = waitid(P_PIDFD, (id_t)g_state.ct.child_pidfd, &info,
+				 WEXITED | options);
 		if (ret < 0)
 			return -1;
 		if (info.si_pid == 0 && (options & WNOHANG))
@@ -387,15 +388,13 @@ static int parse_cmd_spawn(const uint8_t *payload, size_t len,
 		case EK_ATTR_ENV: {
 			if (opts->envc >= ERLKOENIG_MAX_ENV)
 				return -E2BIG;
-			const uint8_t *sep =
-			    memchr(attr.value, '\0', attr.len);
+			const uint8_t *sep = memchr(attr.value, '\0', attr.len);
 			if (!sep)
 				return -EINVAL;
 			size_t klen = (size_t)(sep - attr.value);
 			size_t vlen = attr.len - klen - 1;
 			size_t elen = klen + 1 + vlen;
-			if (opts->strbuf_used + elen + 1 >
-			    sizeof(opts->strbuf))
+			if (opts->strbuf_used + elen + 1 > sizeof(opts->strbuf))
 				return -ENOMEM;
 			char *dst = opts->strbuf + opts->strbuf_used;
 			memcpy(dst, attr.value, klen);
@@ -419,8 +418,7 @@ static int parse_cmd_spawn(const uint8_t *payload, size_t len,
 			if (opts->num_volumes >= ERLKOENIG_MAX_VOLUMES)
 				return -E2BIG;
 			/* "src\0dst" + 4-byte opts */
-			const uint8_t *sep =
-			    memchr(attr.value, '\0', attr.len);
+			const uint8_t *sep = memchr(attr.value, '\0', attr.len);
 			if (!sep || attr.len < 5)
 				return -EINVAL;
 			size_t slen = (size_t)(sep - attr.value);
@@ -453,8 +451,7 @@ static int parse_cmd_spawn(const uint8_t *payload, size_t len,
 			opts->cpu_weight = ek_tlv_u32(&attr);
 			break;
 		case EK_ATTR_IMAGE_PATH:
-			if (attr.len == 0 ||
-			    attr.len >= ERLKOENIG_MAX_PATH)
+			if (attr.len == 0 || attr.len >= ERLKOENIG_MAX_PATH)
 				return -ENAMETOOLONG;
 			memcpy(opts->image_path, attr.value, attr.len);
 			opts->image_path[attr.len] = '\0';
@@ -514,8 +511,7 @@ static void handle_cmd_spawn(const uint8_t *payload, size_t len)
 	g_state.cgroup_path[0] = '\0';
 
 	/* Setup cgroup if limits were requested */
-	if (opts.memory_max > 0 || opts.pids_max > 0 ||
-	    opts.cpu_weight > 0) {
+	if (opts.memory_max > 0 || opts.pids_max > 0 || opts.cpu_weight > 0) {
 		const char *name = strrchr(opts.binary_path, '/');
 
 		name = name ? name + 1 : opts.binary_path;
@@ -1067,10 +1063,9 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		 * This crosses namespace boundaries — the kernel resolves
 		 * the magic symlink to the child's root directory.
 		 */
-		snprintf(root_prefix, sizeof(root_prefix),
-			 "/proc/%d/root", (int)g_state.ct.child_pid);
-		container_root_fd =
-		    open(root_prefix, O_DIRECTORY | O_CLOEXEC);
+		snprintf(root_prefix, sizeof(root_prefix), "/proc/%d/root",
+			 (int)g_state.ct.child_pid);
+		container_root_fd = open(root_prefix, O_DIRECTORY | O_CLOEXEC);
 		if (container_root_fd < 0) {
 			send_reply_error(-errno, "open(container root)");
 			return;
@@ -1157,19 +1152,22 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 
 		/* Write file via openat */
 		{
-			int fd = openat(container_root_fd, rel_path,
-					O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC,
-					(mode_t)mode);
+			int fd =
+			    openat(container_root_fd, rel_path,
+				   O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC,
+				   (mode_t)mode);
 			if (fd < 0) {
 				int e = errno;
 				mount(NULL, "/", NULL,
 				      MS_REMOUNT | MS_RDONLY | MS_BIND, NULL);
 				if (fchdir(orig_root_fd) || chroot("."))
-					LOG_ERR("FATAL: cannot restore root: %s",
-						strerror(errno));
+					LOG_ERR(
+					    "FATAL: cannot restore root: %s",
+					    strerror(errno));
 				if (setns(orig_mnt_fd, CLONE_NEWNS))
-					LOG_ERR("FATAL: cannot restore mnt ns: %s",
-						strerror(errno));
+					LOG_ERR(
+					    "FATAL: cannot restore mnt ns: %s",
+					    strerror(errno));
 				send_reply_error(-e, "open failed");
 				return;
 			}
@@ -1188,10 +1186,12 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 					      MS_REMOUNT | MS_RDONLY | MS_BIND,
 					      NULL);
 					if (fchdir(orig_root_fd) || chroot("."))
-						LOG_ERR("FATAL: cannot restore root: %s",
+						LOG_ERR("FATAL: cannot restore "
+							"root: %s",
 							strerror(errno));
 					if (setns(orig_mnt_fd, CLONE_NEWNS))
-						LOG_ERR("FATAL: cannot restore mnt ns: %s",
+						LOG_ERR("FATAL: cannot restore "
+							"mnt ns: %s",
 							strerror(errno));
 					send_reply_error(-e, "write failed");
 					return;
@@ -1823,8 +1823,8 @@ static int do_handshake(int read_fd, int write_fd)
 	uint8_t peer_version = hs_buf[0];
 
 	if (peer_version != ERLKOENIG_PROTOCOL_VERSION) {
-		LOG_ERR("handshake: peer version %d, we speak %d",
-			peer_version, ERLKOENIG_PROTOCOL_VERSION);
+		LOG_ERR("handshake: peer version %d, we speak %d", peer_version,
+			ERLKOENIG_PROTOCOL_VERSION);
 		uint8_t reply = ERLKOENIG_PROTOCOL_VERSION;
 		erlkoenig_write_frame(write_fd, &reply, 1);
 		return -1;
@@ -2204,8 +2204,7 @@ static int run_socket_mode(const char *sock_path)
 			pfd.events = POLLIN;
 			pfd.revents = 0;
 
-			int pr = ppoll(&pfd, 1, &timeout,
-				       &g_orig_sigmask);
+			int pr = ppoll(&pfd, 1, &timeout, &g_orig_sigmask);
 
 			if (pr < 0) {
 				if (errno == EINTR)
@@ -2324,18 +2323,19 @@ static int run_port_mode(void)
 
 static void print_usage(const char *argv0)
 {
-	fprintf(stderr,
-		"Usage: %s [OPTIONS]\n"
-		"\n"
-		"Options:\n"
-		"  --socket PATH  Run in socket mode (Unix Domain Socket)\n"
-		"  --xdp IFACE    Enable XDP packet steering on host interface\n"
-		"  --id ID        Container ID for log messages\n"
-		"  --help         Show this help\n"
-		"\n"
-		"Without --socket, runs in legacy port mode (STDIN/STDOUT).\n"
-		"Without --xdp, uses kernel routing (default).\n",
-		argv0);
+	fprintf(
+	    stderr,
+	    "Usage: %s [OPTIONS]\n"
+	    "\n"
+	    "Options:\n"
+	    "  --socket PATH  Run in socket mode (Unix Domain Socket)\n"
+	    "  --xdp IFACE    Enable XDP packet steering on host interface\n"
+	    "  --id ID        Container ID for log messages\n"
+	    "  --help         Show this help\n"
+	    "\n"
+	    "Without --socket, runs in legacy port mode (STDIN/STDOUT).\n"
+	    "Without --xdp, uses kernel routing (default).\n",
+	    argv0);
 }
 
 int main(int argc, char *argv[])

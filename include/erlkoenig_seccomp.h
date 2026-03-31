@@ -525,8 +525,7 @@ static int erlkoenig_apply_seccomp(uint8_t profile)
 
 		if (debug_env && debug_env[0] == '1') {
 			for (size_t i = 0; i < filter_len; i++) {
-				if (local_filter[i].code ==
-					(BPF_RET | BPF_K) &&
+				if (local_filter[i].code == (BPF_RET | BPF_K) &&
 				    local_filter[i].k ==
 					SECCOMP_RET_KILL_PROCESS)
 					local_filter[i].k = SECCOMP_RET_LOG;

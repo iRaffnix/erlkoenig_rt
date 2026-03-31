@@ -26,7 +26,7 @@
 #include "erlkoenig_cg.h"
 #include "erlkoenig_log.h"
 
-#define CGROUP_ROOT "/sys/fs/cgroup"
+#define CGROUP_ROOT   "/sys/fs/cgroup"
 #define FALLBACK_BASE CGROUP_ROOT "/erlkoenig"
 
 /*
@@ -155,8 +155,7 @@ int erlkoenig_cg_setup(pid_t pid, const char *name, uint64_t memory_max,
 
 	/* Set memory limit */
 	if (memory_max > 0) {
-		snprintf(knob, sizeof(knob), "%s/memory.max",
-			 cgroup_path_out);
+		snprintf(knob, sizeof(knob), "%s/memory.max", cgroup_path_out);
 		snprintf(value, sizeof(value), "%llu",
 			 (unsigned long long)memory_max);
 		ret = write_file(knob, value);
@@ -182,8 +181,7 @@ int erlkoenig_cg_setup(pid_t pid, const char *name, uint64_t memory_max,
 
 	/* Set CPU weight */
 	if (cpu_weight > 0) {
-		snprintf(knob, sizeof(knob), "%s/cpu.weight",
-			 cgroup_path_out);
+		snprintf(knob, sizeof(knob), "%s/cpu.weight", cgroup_path_out);
 		snprintf(value, sizeof(value), "%u", cpu_weight);
 		ret = write_file(knob, value);
 		if (ret)
@@ -232,8 +230,7 @@ void erlkoenig_cg_teardown(const char *cgroup_path)
 
 	/* Remove the cgroup directory */
 	if (rmdir(cgroup_path))
-		LOG_WARN("cgroup: rmdir %s: %s", cgroup_path,
-			 strerror(errno));
+		LOG_WARN("cgroup: rmdir %s: %s", cgroup_path, strerror(errno));
 	else
 		LOG_INFO("cgroup: teardown %s", cgroup_path);
 }
