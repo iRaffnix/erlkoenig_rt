@@ -73,12 +73,19 @@ static inline bool probe_has_cgroup_delegation(void)
 {
 	if (!probe_has_cgroup_v2())
 		return false;
-	/* Try creating a test cgroup — fails on runners without delegation */
-	int ret = mkdir("/sys/fs/cgroup/erlkoenig-probe", 0755);
-	if (ret < 0 && errno != EEXIST)
+	/* Try creating a test cgroup and writing pids.max */
+	if (mkdir("/sys/fs/cgroup/erlkoenig-probe", 0755) < 0 &&
+	    errno != EEXIST)
 		return false;
+	FILE *f = fopen("/sys/fs/cgroup/erlkoenig-probe/pids.max", "we");
+	if (!f) {
+		rmdir("/sys/fs/cgroup/erlkoenig-probe");
+		return false;
+	}
+	int ok = (fprintf(f, "100") > 0);
+	fclose(f);
 	rmdir("/sys/fs/cgroup/erlkoenig-probe");
-	return true;
+	return ok;
 }
 
 /* Is Landlock available? */
