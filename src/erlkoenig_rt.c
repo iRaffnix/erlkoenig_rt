@@ -2328,10 +2328,11 @@ static void print_usage(const char *argv0)
 	    "Usage: %s [OPTIONS]\n"
 	    "\n"
 	    "Options:\n"
-	    "  --socket PATH  Run in socket mode (Unix Domain Socket)\n"
-	    "  --xdp IFACE    Enable XDP packet steering on host interface\n"
-	    "  --id ID        Container ID for log messages\n"
-	    "  --help         Show this help\n"
+	    "  --socket PATH   Run in socket mode (Unix Domain Socket)\n"
+	    "  --cgroup PATH   Move into cgroup before any allocation\n"
+	    "  --xdp IFACE     Enable XDP packet steering on host interface\n"
+	    "  --id ID         Container ID for log messages\n"
+	    "  --help          Show this help\n"
 	    "\n"
 	    "Without --socket, runs in legacy port mode (STDIN/STDOUT).\n"
 	    "Without --xdp, uses kernel routing (default).\n",
@@ -2343,9 +2344,11 @@ int main(int argc, char *argv[])
 	const char *sock_path = NULL;
 	const char *container_id = NULL;
 	const char *xdp_iface = NULL;
+	const char *cgroup_procs = NULL;
 
 	static const struct option long_opts[] = {
 	    {"socket", required_argument, NULL, 's'},
+	    {"cgroup", required_argument, NULL, 'c'},
 	    {"xdp", required_argument, NULL, 'x'},
 	    {"id", required_argument, NULL, 'i'},
 	    {"help", no_argument, NULL, 'h'},
@@ -2354,11 +2357,14 @@ int main(int argc, char *argv[])
 
 	int opt;
 
-	while ((opt = getopt_long(argc, argv, "s:x:i:h", long_opts, NULL)) !=
+	while ((opt = getopt_long(argc, argv, "s:c:x:i:h", long_opts, NULL)) !=
 	       -1) {
 		switch (opt) {
 		case 's':
 			sock_path = optarg;
+			break;
+		case 'c':
+			cgroup_procs = optarg;
 			break;
 		case 'x':
 			xdp_iface = optarg;
@@ -2372,6 +2378,19 @@ int main(int argc, char *argv[])
 		default:
 			print_usage(argv[0]);
 			return 1;
+		}
+	}
+
+	/*
+	 * Move into container cgroup BEFORE any allocation.
+	 * This must happen before erlkoenig_log_init() or any malloc —
+	 * otherwise memory is charged to the beam cgroup.
+	 */
+	if (cgroup_procs) {
+		int fd = open(cgroup_procs, O_WRONLY);
+		if (fd >= 0) {
+			dprintf(fd, "%d", (int)getpid());
+			close(fd);
 		}
 	}
 
