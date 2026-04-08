@@ -190,7 +190,7 @@ if(ERLKOENIG_BUILD_TESTBIN)
     set(TESTBIN_SOURCES
         sleeper echo_server crasher mem_eater disk_writer cpu_burner stdout_flood
         hello_output syscall_fork syscall_mount syscall_write_rootfs
-        stdin_echo proc_check
+        stdin_echo proc_check landlock_check
     )
 
     foreach(tb ${TESTBIN_SOURCES})
