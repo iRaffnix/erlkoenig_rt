@@ -1251,6 +1251,22 @@ static int apply_landlock_container(void)
 		return 0; /* non-fatal */
 	}
 
+	/* Allow EXECUTE on /app — the container binary.
+	 * Everything else is denied. */
+	{
+		int app_dir = open("/app", O_PATH | O_CLOEXEC);
+		if (app_dir >= 0) {
+			struct landlock_path_beneath_attr app_rule = {
+			    .allowed_access = LANDLOCK_ACCESS_FS_EXECUTE |
+					      LANDLOCK_ACCESS_FS_READ_FILE,
+			    .parent_fd = app_dir,
+			};
+			syscall(SYS_landlock_add_rule, ruleset_fd,
+				LANDLOCK_RULE_PATH_BENEATH, &app_rule, 0);
+			close(app_dir);
+		}
+	}
+
 	/* NO_NEW_PRIVS already set by cap drop — but be safe */
 	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 
