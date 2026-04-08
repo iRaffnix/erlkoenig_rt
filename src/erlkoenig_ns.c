@@ -61,6 +61,7 @@
 
 #include <linux/close_range.h>
 #include <linux/openat2.h>
+#include <linux/landlock.h>
 
 #define STACK_SIZE (1024UL * 1024)
 
@@ -1199,6 +1200,72 @@ static void run_init(pid_t app_pid)
 }
 
 /*
+ * apply_landlock_container - Deny all filesystem access inside container.
+ *
+ * Creates an empty Landlock ruleset (no rules = deny everything).
+ * After activation, the process can only use pre-opened FDs (stdin,
+ * stdout, stderr, pipes). New open() calls return EACCES.
+ *
+ * Graceful fallback: if Landlock is not available (kernel < 5.13),
+ * logs a warning and returns 0 (success). The container still runs
+ * but without Landlock protection.
+ *
+ * Must be called AFTER seccomp and cap drop, BEFORE execve.
+ */
+static int apply_landlock_container(void)
+{
+	int abi = (int)syscall(SYS_landlock_create_ruleset, NULL, 0,
+			       LANDLOCK_CREATE_RULESET_VERSION);
+	if (abi < 0) {
+		LOG_INFO("Landlock: not available (kernel < 5.13), skipping");
+		return 0; /* graceful fallback */
+	}
+
+	__u64 fs_rights = LANDLOCK_ACCESS_FS_EXECUTE |
+			  LANDLOCK_ACCESS_FS_WRITE_FILE |
+			  LANDLOCK_ACCESS_FS_READ_FILE |
+			  LANDLOCK_ACCESS_FS_READ_DIR |
+			  LANDLOCK_ACCESS_FS_REMOVE_DIR |
+			  LANDLOCK_ACCESS_FS_REMOVE_FILE |
+			  LANDLOCK_ACCESS_FS_MAKE_CHAR |
+			  LANDLOCK_ACCESS_FS_MAKE_DIR |
+			  LANDLOCK_ACCESS_FS_MAKE_REG |
+			  LANDLOCK_ACCESS_FS_MAKE_SOCK |
+			  LANDLOCK_ACCESS_FS_MAKE_FIFO |
+			  LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+			  LANDLOCK_ACCESS_FS_MAKE_SYM;
+
+	if (abi >= 2)
+		fs_rights |= LANDLOCK_ACCESS_FS_REFER;
+	if (abi >= 3)
+		fs_rights |= LANDLOCK_ACCESS_FS_TRUNCATE;
+
+	struct landlock_ruleset_attr attr = {
+	    .handled_access_fs = fs_rights,
+	};
+
+	int ruleset_fd =
+	    (int)syscall(SYS_landlock_create_ruleset, &attr, sizeof(attr), 0);
+	if (ruleset_fd < 0) {
+		LOG_WARN("landlock_create_ruleset: %s", strerror(errno));
+		return 0; /* non-fatal */
+	}
+
+	/* NO_NEW_PRIVS already set by cap drop — but be safe */
+	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+
+	if (syscall(SYS_landlock_restrict_self, ruleset_fd, 0)) {
+		LOG_WARN("landlock_restrict_self: %s", strerror(errno));
+		close(ruleset_fd);
+		return 0; /* non-fatal */
+	}
+
+	close(ruleset_fd);
+	LOG_INFO("Landlock: container filesystem access denied (ABI v%d)", abi);
+	return 0;
+}
+
+/*
  * child_init - Runs inside the cloned child (PID 1 in new namespace).
  *
  * 1. Read rootfs path from sync pipe
@@ -1426,6 +1493,17 @@ static int child_init(void *arg)
 				_exit(126);
 		}
 
+		/* Open the app binary BEFORE Landlock activation.
+		 * O_PATH: reference only, no read permission needed.
+		 * O_CLOEXEC: closed on successful exec.
+		 * After Landlock, open("/app") would fail with EACCES. */
+		int app_fd = open("/app", O_PATH | O_CLOEXEC);
+
+		/* NOW activate Landlock — deny all filesystem access.
+		 * Pre-opened FDs (stdin/stdout/stderr/pipes/app_fd) still work.
+		 * Non-fatal: graceful fallback on kernels < 5.13. */
+		apply_landlock_container();
+
 		if (ca->pty_slave >= 0) {
 			/* PTY mode: new session, controlling terminal */
 			if (setsid() < 0)
@@ -1471,8 +1549,8 @@ static int child_init(void *arg)
 		 * to path-based execve would reopen the TOCTOU window.
 		 */
 		{
-			int app_fd = open("/app", O_PATH | O_CLOEXEC);
-
+			/* app_fd was opened BEFORE Landlock activation.
+			 * If open failed (no /app), fall back to path-based exec. */
 			if (app_fd >= 0) {
 				syscall(SYS_execveat, app_fd, "", opts->argv,
 					opts->envp, AT_EMPTY_PATH);
