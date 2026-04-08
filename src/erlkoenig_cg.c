@@ -140,6 +140,12 @@ int erlkoenig_cg_setup(pid_t pid, const char *name, uint64_t memory_max,
 	/* Ensure base directory exists */
 	mkdir(base, 0755); /* may already exist */
 
+	/* Enable controllers in base cgroup.
+	 * Without this, child cgroups can't use pids.max/memory.max.
+	 * Harmless if already enabled or not supported. */
+	snprintf(knob, sizeof(knob), "%s/cgroup.subtree_control", base);
+	write_file(knob, "+pids +memory +cpu");
+
 	/* Build container cgroup path: <base>/ct-<name> */
 	ret = snprintf(cgroup_path_out, path_len, "%s/ct-%s", base, name);
 	if (ret < 0 || (size_t)ret >= path_len)

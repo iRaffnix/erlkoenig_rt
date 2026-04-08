@@ -73,18 +73,49 @@ static inline bool probe_has_cgroup_delegation(void)
 {
 	if (!probe_has_cgroup_v2())
 		return false;
-	/* Try creating a test cgroup and writing pids.max */
-	if (mkdir("/sys/fs/cgroup/erlkoenig-probe", 0755) < 0 &&
-	    errno != EEXIST)
+
+	/* Find our own cgroup path (same as erlkoenig_cg_detect_base).
+	 * We must be able to enable subtree_control AND create children
+	 * in our actual cgroup, not just the root. */
+	char buf[4096];
+	int fd = open("/proc/self/cgroup", O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
 		return false;
-	FILE *f = fopen("/sys/fs/cgroup/erlkoenig-probe/pids.max", "we");
+	ssize_t n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0)
+		return false;
+	buf[n] = '\0';
+
+	/* Parse "0::/path\n" */
+	char *p = strstr(buf, "0::");
+	if (!p)
+		return false;
+	p += 3;
+	char *nl = strchr(p, '\n');
+	if (nl) *nl = '\0';
+
+	char base[4096];
+	snprintf(base, sizeof(base), "/sys/fs/cgroup%s", p);
+
+	/* Test if we can actually create a child cgroup with working
+	 * pids.max. This requires subtree_control delegation which
+	 * is not available on all systems (e.g. Hetzner Cloud VPS). */
+	char test_cg[4096 + 64];
+	snprintf(test_cg, sizeof(test_cg), "%s/ek-cg-probe", base);
+	if (mkdir(test_cg, 0755) && errno != EEXIST)
+		return false;
+
+	char knob[4096 + 64];
+	snprintf(knob, sizeof(knob), "%s/pids.max", test_cg);
+	FILE *f = fopen(knob, "we");
 	if (!f) {
-		rmdir("/sys/fs/cgroup/erlkoenig-probe");
+		rmdir(test_cg);
 		return false;
 	}
-	int ok = (fprintf(f, "100") > 0);
+	int ok = (fprintf(f, "100") > 0 && fflush(f) == 0 && !ferror(f));
 	fclose(f);
-	rmdir("/sys/fs/cgroup/erlkoenig-probe");
+	rmdir(test_cg);
 	return ok;
 }
 
