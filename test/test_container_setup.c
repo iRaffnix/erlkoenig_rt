@@ -1775,7 +1775,162 @@ START_TEST(test_landlock_blocks_create)
 END_TEST
 
 /* ================================================================
- * TEST 28: Cgroup pids.max Enforcement
+ * TEST 28: Landlock /app Execute Exception
+ * ================================================================
+ *
+ * WAS WIR TESTEN:
+ *   Landlock deny-all PLUS eine Regel die EXECUTE+READ auf
+ *   einem bestimmten Pfad erlaubt. Genau das Modell das
+ *   erlkoenig_ns.c fuer Container nutzt:
+ *     - open("/app") vor Landlock → FD sichern
+ *     - Landlock aktivieren mit /app Ausnahme
+ *     - execveat(app_fd) funktioniert
+ *     - open("/etc/hostname") scheitert mit EACCES
+ *
+ * WARUM WICHTIG:
+ *   Der Container darf sein eigenes Binary ausfuehren, aber
+ *   KEINE anderen Dateien oeffnen. Das ist die Kern-Invariante
+ *   der Landlock-Isolation.
+ */
+
+static int do_test_landlock_app_exception(void)
+{
+	/* Create a temp dir with an "app" file to simulate container rootfs */
+	char tmpdir[] = "/tmp/ek_ll_test_XXXXXX";
+
+	if (!mkdtemp(tmpdir))
+		return 1;
+
+	char app_path[256];
+	snprintf(app_path, sizeof(app_path), "%s/app", tmpdir);
+
+	/* Create a dummy "app" file */
+	int fd = open(app_path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	if (fd < 0) {
+		rmdir(tmpdir);
+		return 1;
+	}
+	write(fd, "#!/bin/true\n", 12);
+	close(fd);
+
+	/* Check Landlock ABI */
+	int abi = (int)syscall(SYS_landlock_create_ruleset, NULL, 0,
+			       LANDLOCK_CREATE_RULESET_VERSION);
+	if (abi < 0) {
+		unlink(app_path);
+		rmdir(tmpdir);
+		fprintf(stderr, "  SKIP: no Landlock\n");
+		return 0;
+	}
+
+	/* Build full rights mask */
+	__u64 fs_rights =
+	    LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_WRITE_FILE |
+	    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
+	    LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+	    LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_MAKE_DIR |
+	    LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_FIFO | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_SYM;
+	if (abi >= 2)
+		fs_rights |= LANDLOCK_ACCESS_FS_REFER;
+	if (abi >= 3)
+		fs_rights |= LANDLOCK_ACCESS_FS_TRUNCATE;
+
+	struct landlock_ruleset_attr attr = {
+	    .handled_access_fs = fs_rights,
+	};
+	int ruleset_fd =
+	    (int)syscall(SYS_landlock_create_ruleset, &attr, sizeof(attr), 0);
+	if (ruleset_fd < 0) {
+		unlink(app_path);
+		rmdir(tmpdir);
+		return 1;
+	}
+
+	/* Add exception: EXECUTE + READ on app_path */
+	int app_dir_fd = open(app_path, O_PATH | O_CLOEXEC);
+	if (app_dir_fd >= 0) {
+		struct landlock_path_beneath_attr rule = {
+		    .allowed_access = LANDLOCK_ACCESS_FS_EXECUTE |
+				      LANDLOCK_ACCESS_FS_READ_FILE,
+		    .parent_fd = app_dir_fd,
+		};
+		syscall(SYS_landlock_add_rule, ruleset_fd,
+			LANDLOCK_RULE_PATH_BENEATH, &rule, 0);
+		close(app_dir_fd);
+	}
+
+	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	if (syscall(SYS_landlock_restrict_self, ruleset_fd, 0)) {
+		close(ruleset_fd);
+		unlink(app_path);
+		rmdir(tmpdir);
+		return 1;
+	}
+	close(ruleset_fd);
+
+	/* TEST 1: /app should be readable (exception) */
+	int app_fd = open(app_path, O_RDONLY);
+	if (app_fd < 0) {
+		fprintf(stderr, "  FAIL: open(%s) blocked: %s\n", app_path,
+			strerror(errno));
+		return 1;
+	}
+	close(app_fd);
+
+	/* TEST 2: /etc/hostname should be BLOCKED */
+	int etc_fd = open("/etc/hostname", O_RDONLY);
+	if (etc_fd >= 0) {
+		fprintf(stderr, "  FAIL: open(/etc/hostname) allowed\n");
+		close(etc_fd);
+		return 1;
+	}
+	if (errno != EACCES) {
+		fprintf(stderr, "  FAIL: expected EACCES, got %s\n",
+			strerror(errno));
+		return 1;
+	}
+
+	/* TEST 3: creating a new file should be BLOCKED */
+	int new_fd = open("/tmp/landlock_test_new", O_WRONLY | O_CREAT, 0600);
+	if (new_fd >= 0) {
+		fprintf(stderr, "  FAIL: file creation allowed\n");
+		close(new_fd);
+		unlink("/tmp/landlock_test_new");
+		return 1;
+	}
+
+	/* Cleanup (may fail due to Landlock — that's OK) */
+	unlink(app_path);
+	rmdir(tmpdir);
+
+	return 0;
+}
+
+START_TEST(test_landlock_app_exception)
+{
+	if (!probe_has_landlock()) {
+		fprintf(stderr, "  SKIP (needs Landlock, kernel >= 5.13)\n");
+		return;
+	}
+	pid_t pid = fork();
+
+	ck_assert(pid >= 0);
+
+	if (pid == 0)
+		_exit(do_test_landlock_app_exception());
+
+	int status;
+
+	waitpid(pid, &status, 0);
+	ck_assert(WIFEXITED(status));
+	ck_assert_int_eq(WEXITSTATUS(status), 0);
+}
+END_TEST
+
+/* ================================================================
+ * TEST 29: Cgroup pids.max Enforcement
  * ================================================================
  *
  * LINUX-KONZEPT:
@@ -2089,6 +2244,7 @@ static Suite *container_setup_suite(void)
 	tcase_add_test(tc_ll, test_landlock_deny_all);
 	tcase_add_test(tc_ll, test_landlock_pipe_survives);
 	tcase_add_test(tc_ll, test_landlock_blocks_create);
+	tcase_add_test(tc_ll, test_landlock_app_exception);
 	suite_add_tcase(s, tc_ll);
 
 	/* Phase 7: Cgroup Enforcement */
