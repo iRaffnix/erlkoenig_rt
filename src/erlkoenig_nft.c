@@ -76,8 +76,7 @@ static int nft_drain_acks(int nlfd)
 	return first_err;
 }
 
-int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch,
-			size_t batch_len)
+int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch, size_t batch_len)
 {
 	char ns_path[64];
 	int orig_ns = -1;
@@ -116,7 +115,8 @@ int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch,
 	}
 
 	/* Open NETLINK_NETFILTER socket (now inside child's netns) */
-	nlfd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, EK_NETLINK_NETFILTER);
+	nlfd =
+	    socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, EK_NETLINK_NETFILTER);
 	if (nlfd < 0) {
 		ret = -(int)errno;
 		LOG_SYSCALL("nft: socket(NETLINK_NETFILTER)");
@@ -137,8 +137,8 @@ int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch,
 	setsockopt(nlfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
 	/* Send the pre-built batch (atomic nft transaction) */
-	sent = sendto(nlfd, batch, batch_len, 0,
-		      (struct sockaddr *)&addr, sizeof(addr));
+	sent = sendto(nlfd, batch, batch_len, 0, (struct sockaddr *)&addr,
+		      sizeof(addr));
 	if (sent < 0) {
 		ret = -(int)errno;
 		LOG_SYSCALL("nft: sendto");
@@ -161,9 +161,12 @@ out_restore:
 	if (setns(orig_ns, CLONE_NEWNET))
 		LOG_SYSCALL("nft: setns(restore) CRITICAL");
 out:
-	if (nlfd >= 0) close(nlfd);
-	if (child_ns >= 0) close(child_ns);
-	if (orig_ns >= 0) close(orig_ns);
+	if (nlfd >= 0)
+		close(nlfd);
+	if (child_ns >= 0)
+		close(child_ns);
+	if (orig_ns >= 0)
+		close(orig_ns);
 	return ret;
 }
 
@@ -173,6 +176,7 @@ int erlkoenig_nft_list(pid_t child_pid, uint8_t *out, size_t out_len,
 	(void)child_pid;
 	(void)out;
 	(void)out_len;
-	if (used) *used = 0;
+	if (used)
+		*used = 0;
 	return -ENOSYS;
 }

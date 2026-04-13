@@ -1857,7 +1857,8 @@ static void handle_cmd_nft_setup(const uint8_t *payload, size_t len)
 	size_t batch_len = 0;
 
 	if (g_state.state != STATE_CREATED && g_state.state != STATE_RUNNING) {
-		send_reply_error(-EINVAL, "nft_setup requires state CREATED or RUNNING");
+		send_reply_error(-EINVAL,
+				 "nft_setup requires state CREATED or RUNNING");
 		return;
 	}
 
@@ -1871,7 +1872,9 @@ static void handle_cmd_nft_setup(const uint8_t *payload, size_t len)
 			break;
 		default:
 			if (attr.type & EK_TLV_CRITICAL_BIT) {
-				send_reply_error(-EPROTO, "unknown critical attr in nft_setup");
+				send_reply_error(
+				    -EPROTO,
+				    "unknown critical attr in nft_setup");
 				return;
 			}
 			break;
@@ -1883,8 +1886,8 @@ static void handle_cmd_nft_setup(const uint8_t *payload, size_t len)
 		return;
 	}
 
-	LOG_INFO("NFT_SETUP batch=%zu bytes pid=%d",
-		 batch_len, (int)g_state.ct.child_pid);
+	LOG_INFO("NFT_SETUP batch=%zu bytes pid=%d", batch_len,
+		 (int)g_state.ct.child_pid);
 
 	int ret = erlkoenig_nft_apply(g_state.ct.child_pid, batch, batch_len);
 	if (ret) {
@@ -1901,7 +1904,8 @@ static void handle_cmd_nft_setup(const uint8_t *payload, size_t len)
 static void handle_cmd_nft_list(void)
 {
 	if (g_state.state != STATE_RUNNING && g_state.state != STATE_CREATED) {
-		send_reply_error(-EINVAL, "nft_list requires state CREATED or RUNNING");
+		send_reply_error(-EINVAL,
+				 "nft_list requires state CREATED or RUNNING");
 		return;
 	}
 
