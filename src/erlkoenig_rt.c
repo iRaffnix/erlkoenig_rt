@@ -78,6 +78,7 @@
 #include "erlkoenig_nodecert.h"
 #include "erlkoenig_cg.h"
 #include "erlkoenig_tlv.h"
+#include "erlkoenig_nft.h"
 
 #include "erlkoenig_xdp_api.h"
 /* Seccomp BPF macros (from erlkoenig_seccomp.h, avoid pulling
@@ -1843,6 +1844,72 @@ static int do_handshake(int read_fd, int write_fd)
 /* -- Dispatch ----------------------------------------------------- */
 
 /*
+ * handle_cmd_nft_setup - Apply nftables batch in container netns.
+ *
+ * TLV payload contains a single critical attribute: the raw nftables
+ * netlink batch binary (BATCH_BEGIN + messages + BATCH_END).
+ */
+static void handle_cmd_nft_setup(const uint8_t *payload, size_t len)
+{
+	struct erlkoenig_buf b;
+	struct ek_tlv attr;
+	const uint8_t *batch = NULL;
+	size_t batch_len = 0;
+
+	if (g_state.state != STATE_CREATED && g_state.state != STATE_RUNNING) {
+		send_reply_error(-EINVAL, "nft_setup requires state CREATED or RUNNING");
+		return;
+	}
+
+	erlkoenig_buf_init(&b, (uint8_t *)payload, len);
+	while (ek_tlv_next(&b, &attr) == 0) {
+		uint16_t type = attr.type & (uint16_t)~EK_TLV_CRITICAL_BIT;
+		switch (type) {
+		case 0x01: /* EK_ATTR_NFT_BATCH */
+			batch = attr.value;
+			batch_len = attr.len;
+			break;
+		default:
+			if (attr.type & EK_TLV_CRITICAL_BIT) {
+				send_reply_error(-EPROTO, "unknown critical attr in nft_setup");
+				return;
+			}
+			break;
+		}
+	}
+
+	if (!batch || batch_len == 0) {
+		send_reply_error(-EINVAL, "nft_setup: missing batch payload");
+		return;
+	}
+
+	LOG_INFO("NFT_SETUP batch=%zu bytes pid=%d",
+		 batch_len, (int)g_state.ct.child_pid);
+
+	int ret = erlkoenig_nft_apply(g_state.ct.child_pid, batch, batch_len);
+	if (ret) {
+		send_reply_error((int32_t)ret, strerror(-ret));
+		return;
+	}
+
+	send_reply_ok(NULL, 0);
+}
+
+/*
+ * handle_cmd_nft_list - Dump nftables ruleset from container netns.
+ */
+static void handle_cmd_nft_list(void)
+{
+	if (g_state.state != STATE_RUNNING && g_state.state != STATE_CREATED) {
+		send_reply_error(-EINVAL, "nft_list requires state CREATED or RUNNING");
+		return;
+	}
+
+	/* TODO: structured dump via erlkoenig_nft_list() */
+	send_reply_error(-ENOSYS, "nft_list not yet implemented");
+}
+
+/*
  * dispatch_command - Route a received command to its handler.
  * @buf:	Payload (starts with tag byte)
  * @len:	Payload length (including tag)
@@ -1895,6 +1962,12 @@ static void dispatch_command(const uint8_t *buf, size_t len)
 		break;
 	case ERLKOENIG_TAG_CMD_METRICS_STOP:
 		handle_cmd_metrics_stop();
+		break;
+	case ERLKOENIG_TAG_CMD_NFT_SETUP:
+		handle_cmd_nft_setup(payload, payload_len);
+		break;
+	case ERLKOENIG_TAG_CMD_NFT_LIST:
+		handle_cmd_nft_list();
 		break;
 	default:
 		LOG_WARN("unknown command tag 0x%02X", tag);

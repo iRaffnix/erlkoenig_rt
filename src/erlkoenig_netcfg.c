@@ -774,11 +774,14 @@ int erlkoenig_netcfg_setup(pid_t child_pid, const char *ifname, uint32_t ip,
 		}
 	}
 
-	/* Add default route via gateway */
-	ret = nl_add_default_route(nlfd, gateway);
-	if (ret) {
-		LOG_ERR("netcfg: add_default_route failed: %s", strerror(-ret));
-		goto out_restore;
+	/* Add default route via gateway (skip if gateway=0, e.g. IPVLAN L3S) */
+	if (gateway != 0) {
+		ret = nl_add_default_route(nlfd, gateway);
+		if (ret) {
+			LOG_ERR("netcfg: add_default_route failed: %s",
+				strerror(-ret));
+			goto out_restore;
+		}
 	}
 
 	LOG_INFO("netcfg: configured %s ifindex=%d in pid=%d netns", ifname,

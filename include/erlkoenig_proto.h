@@ -126,6 +126,8 @@ _Static_assert(sizeof(uint64_t) == 8, "protocol assumes 8-byte uint64");
 #define ERLKOENIG_TAG_CMD_DEVICE_FILTER 0x19
 #define ERLKOENIG_TAG_CMD_METRICS_START 0x1A
 #define ERLKOENIG_TAG_CMD_METRICS_STOP	0x1B
+#define ERLKOENIG_TAG_CMD_NFT_SETUP	0x1C
+#define ERLKOENIG_TAG_CMD_NFT_LIST	0x1D
 
 /* -- Spawn flags -------------------------------------------------- */
 
@@ -178,6 +180,10 @@ static inline const char *erlkoenig_tag_name(uint8_t tag)
 		return "CMD_METRICS_START";
 	case 0x1B:
 		return "CMD_METRICS_STOP";
+	case 0x1C:
+		return "CMD_NFT_SETUP";
+	case 0x1D:
+		return "CMD_NFT_LIST";
 	default:
 		return "UNKNOWN";
 	}

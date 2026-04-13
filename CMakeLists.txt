@@ -9,6 +9,7 @@ add_executable(erlkoenig_rt
     src/erlkoenig_rt.c
     src/erlkoenig_ns.c
     src/erlkoenig_netcfg.c
+    src/erlkoenig_nft.c
     src/erlkoenig_devfilter.c
     src/erlkoenig_metrics.c
     src/erlkoenig_nodecert.c
