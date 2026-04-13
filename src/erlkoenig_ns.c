@@ -1221,19 +1221,14 @@ static int apply_landlock_container(void)
 		return 0; /* graceful fallback */
 	}
 
-	__u64 fs_rights = LANDLOCK_ACCESS_FS_EXECUTE |
-			  LANDLOCK_ACCESS_FS_WRITE_FILE |
-			  LANDLOCK_ACCESS_FS_READ_FILE |
-			  LANDLOCK_ACCESS_FS_READ_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_DIR |
-			  LANDLOCK_ACCESS_FS_REMOVE_FILE |
-			  LANDLOCK_ACCESS_FS_MAKE_CHAR |
-			  LANDLOCK_ACCESS_FS_MAKE_DIR |
-			  LANDLOCK_ACCESS_FS_MAKE_REG |
-			  LANDLOCK_ACCESS_FS_MAKE_SOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_FIFO |
-			  LANDLOCK_ACCESS_FS_MAKE_BLOCK |
-			  LANDLOCK_ACCESS_FS_MAKE_SYM;
+	__u64 fs_rights =
+	    LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_WRITE_FILE |
+	    LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
+	    LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+	    LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_MAKE_DIR |
+	    LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_MAKE_SOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_FIFO | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+	    LANDLOCK_ACCESS_FS_MAKE_SYM;
 
 	if (abi >= 2)
 		fs_rights |= LANDLOCK_ACCESS_FS_REFER;
@@ -1566,7 +1561,8 @@ static int child_init(void *arg)
 		 */
 		{
 			/* app_fd was opened BEFORE Landlock activation.
-			 * If open failed (no /app), fall back to path-based exec. */
+			 * If open failed (no /app), fall back to path-based
+			 * exec. */
 			if (app_fd >= 0) {
 				syscall(SYS_execveat, app_fd, "", opts->argv,
 					opts->envp, AT_EMPTY_PATH);

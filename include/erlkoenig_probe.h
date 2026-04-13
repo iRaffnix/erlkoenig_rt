@@ -93,7 +93,8 @@ static inline bool probe_has_cgroup_delegation(void)
 		return false;
 	p += 3;
 	char *nl = strchr(p, '\n');
-	if (nl) *nl = '\0';
+	if (nl)
+		*nl = '\0';
 
 	char base[4096];
 	snprintf(base, sizeof(base), "/sys/fs/cgroup%s", p);
