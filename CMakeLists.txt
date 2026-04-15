@@ -15,6 +15,7 @@ add_executable(erlkoenig_rt
     src/erlkoenig_nodecert.c
     src/erlkoenig_cg.c
     src/erlkoenig_xdp.c
+    src/erlkoenig_cloned.c
 )
 
 target_include_directories(erlkoenig_rt PRIVATE include)

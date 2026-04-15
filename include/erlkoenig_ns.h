@@ -39,16 +39,40 @@
 #define ERLKOENIG_MAX_ENV	 128
 #define ERLKOENIG_NETNS_PATH_LEN 64
 
-#define ERLKOENIG_MAX_VOLUMES 16
+#define ERLKOENIG_MAX_VOLUMES	  16
+#define ERLKOENIG_MAX_MOUNT_DATA  256 /* fs-specific passthrough data */
 
-/* Semantic volume options (NOT mount(2) flags!) */
+/*
+ * Legacy semantic bit — still honoured so a `read_only:` boolean
+ * coming from old DSL code keeps working. New code uses `flags`
+ * directly (MS_RDONLY).
+ */
 #define EK_VOLUME_F_READONLY (1u << 0)
-/* Reserve: EK_VOLUME_F_NOSUID (1u << 1), EK_VOLUME_F_NOEXEC (1u << 2) */
 
+/*
+ * struct erlkoenig_volume - Bind-mount specification.
+ *
+ * @source:	 Host directory (absolute path).
+ * @dest:	 Container directory (absolute path).
+ * @flags:	 MS_* bits to SET on the mount (e.g. MS_RDONLY, MS_NOSUID).
+ * @clear:	 MS_* bits to CLEAR (relevant for MS_REMOUNT scenarios).
+ * @propagation: One of EK_PROP_* (0 = inherit, don't set propagation).
+ * @recursive:	 Non-zero → apply propagation recursively (MS_REC).
+ * @data:	 fs-specific passthrough string (e.g. tmpfs size=64m).
+ *		 NUL-terminated, empty if unused.
+ *
+ * The legacy `opts` u32 bit field has been subsumed by `flags`
+ * directly — the wire-format decoder translates EK_VOLUME_F_READONLY
+ * into MS_RDONLY at decode time.
+ */
 struct erlkoenig_volume {
-	char source[ERLKOENIG_MAX_PATH]; /* Host directory (absolute) */
-	char dest[ERLKOENIG_MAX_PATH];	 /* Container directory (absolute) */
-	uint32_t opts;			 /* EK_VOLUME_F_* flags */
+	char source[ERLKOENIG_MAX_PATH];
+	char dest[ERLKOENIG_MAX_PATH];
+	uint32_t flags;
+	uint32_t clear;
+	uint8_t propagation;
+	uint8_t recursive;
+	char data[ERLKOENIG_MAX_MOUNT_DATA];
 };
 
 /*

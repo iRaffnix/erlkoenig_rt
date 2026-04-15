@@ -72,17 +72,18 @@ int ek_mount_procfs(const char *rootfs);
 /*
  * ek_bind_mount_volume - Bind-mount a host directory into the rootfs.
  * @rootfs:	Path to rootfs root
- * @source:	Absolute host directory path
- * @dest:	Absolute container directory path
- * @opts:	EK_VOLUME_F_* flags (EK_VOLUME_F_READONLY etc.)
+ * @vol:	Full volume spec (paths, flags, propagation, data)
  *
  * Creates the dest directory under rootfs (mkdir -p), then bind-mounts
- * the source on top. For read-only: MS_BIND + MS_BIND|MS_REMOUNT|MS_RDONLY.
- * Must be called BEFORE pivot_root (host paths still visible).
+ * the source on top. Extra MS_* flags (e.g. MS_NOSUID, MS_NOEXEC) are
+ * applied via a follow-up MS_BIND|MS_REMOUNT because Linux ignores
+ * these on the initial MS_BIND. Propagation is applied separately
+ * per mount(2) semantics. Must be called BEFORE pivot_root.
+ *
  * Returns 0 on success, negative errno on failure.
  */
-int ek_bind_mount_volume(const char *rootfs, const char *source,
-			 const char *dest, uint32_t opts);
+int ek_bind_mount_volume(const char *rootfs,
+			 const struct erlkoenig_volume *vol);
 
 /*
  * Phase 2: Isolation herstellen

@@ -133,6 +133,32 @@ _Static_assert(sizeof(uint64_t) == 8, "protocol assumes 8-byte uint64");
 
 #define ERLKOENIG_SPAWN_FLAG_PTY 0x01
 
+/* -- Volume TLV wire format --------------------------------------- */
+
+/*
+ * EK_ATTR_VOLUME value bytes:
+ *
+ *   host_path\0 container_path\0
+ *   flags:u32 clear:u32 propagation:u8 recursive:u8
+ *   data_len:u16 data:data_len bytes
+ *
+ * flags/clear: Linux MS_* bitmasks, host byte order in network form
+ * (big-endian on the wire). propagation: one of EK_PROP_*.
+ * recursive: 0 or 1. data: opaque fs-specific string, fed to mount(2)
+ * as the `data` argument (e.g. "size=64m,mode=0755" for tmpfs).
+ *
+ * The minimum value length is therefore 2 (two \0 separators for
+ * empty paths) + 12 (4+4+1+1+2 fixed fields) = 14 bytes.
+ */
+#define EK_VOLUME_TLV_MIN 14u
+
+/* Propagation enum values — keep in sync with Erlang proto.erl. */
+#define EK_PROP_NONE	   0
+#define EK_PROP_PRIVATE	   1
+#define EK_PROP_SLAVE	   2
+#define EK_PROP_SHARED	   3
+#define EK_PROP_UNBINDABLE 4
+
 /* -- Tag name lookup ---------------------------------------------- */
 
 static inline const char *erlkoenig_tag_name(uint8_t tag)

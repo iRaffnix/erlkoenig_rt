@@ -79,6 +79,7 @@
 #include "erlkoenig_cg.h"
 #include "erlkoenig_tlv.h"
 #include "erlkoenig_nft.h"
+#include "erlkoenig_cloned.h"
 
 #include "erlkoenig_xdp_api.h"
 /* Seccomp BPF macros (from erlkoenig_seccomp.h, avoid pulling
@@ -418,27 +419,67 @@ static int parse_cmd_spawn(const uint8_t *payload, size_t len,
 		case EK_ATTR_VOLUME: {
 			if (opts->num_volumes >= ERLKOENIG_MAX_VOLUMES)
 				return -E2BIG;
-			/* "src\0dst" + 4-byte opts */
-			const uint8_t *sep = memchr(attr.value, '\0', attr.len);
-			if (!sep || attr.len < 5)
+			/*
+			 * Wire: host\0 cont\0 flags:u32 clear:u32 prop:u8
+			 *       rec:u8 data_len:u16 data:data_len
+			 * See EK_VOLUME_TLV_MIN in erlkoenig_proto.h.
+			 */
+			if (attr.len < EK_VOLUME_TLV_MIN)
 				return -EINVAL;
-			size_t slen = (size_t)(sep - attr.value);
-			size_t rest = attr.len - slen - 1;
-			if (rest < 4)
+			const uint8_t *sep1 = memchr(attr.value, '\0', attr.len);
+			if (!sep1)
 				return -EINVAL;
-			size_t dlen = rest - 4;
+			size_t slen = (size_t)(sep1 - attr.value);
+			size_t after_src = slen + 1;
+			if (after_src >= attr.len)
+				return -EINVAL;
+			const uint8_t *sep2 = memchr(attr.value + after_src,
+						     '\0', attr.len - after_src);
+			if (!sep2)
+				return -EINVAL;
+			size_t dlen =
+			    (size_t)(sep2 - (attr.value + after_src));
+			size_t after_dst = after_src + dlen + 1;
+			/* Fixed header after the two NUL-terminated paths:
+			 * 4+4+1+1+2 = 12 bytes, then variable data. */
+			if (attr.len - after_dst < 12)
+				return -EINVAL;
 			if (slen >= ERLKOENIG_MAX_PATH - 1 ||
 			    dlen >= ERLKOENIG_MAX_PATH - 1)
 				return -ENAMETOOLONG;
+			const uint8_t *hdr = attr.value + after_dst;
+			uint32_t flags = (uint32_t)hdr[0] << 24
+					 | (uint32_t)hdr[1] << 16
+					 | (uint32_t)hdr[2] << 8
+					 | (uint32_t)hdr[3];
+			uint32_t clear = (uint32_t)hdr[4] << 24
+					 | (uint32_t)hdr[5] << 16
+					 | (uint32_t)hdr[6] << 8
+					 | (uint32_t)hdr[7];
+			uint8_t prop = hdr[8];
+			uint8_t rec = hdr[9];
+			uint16_t data_len =
+			    (uint16_t)hdr[10] << 8 | (uint16_t)hdr[11];
+			if ((size_t)data_len != attr.len - after_dst - 12)
+				return -EINVAL;
+			if (data_len >= ERLKOENIG_MAX_MOUNT_DATA)
+				return -ENAMETOOLONG;
+			if (prop > EK_PROP_UNBINDABLE)
+				return -EINVAL;
 			uint8_t vi = opts->num_volumes;
 			memcpy(opts->volumes[vi].source, attr.value, slen);
 			opts->volumes[vi].source[slen] = '\0';
-			memcpy(opts->volumes[vi].dest, sep + 1, dlen);
+			memcpy(opts->volumes[vi].dest,
+			       attr.value + after_src, dlen);
 			opts->volumes[vi].dest[dlen] = '\0';
-			const uint8_t *ob = sep + 1 + dlen;
-			opts->volumes[vi].opts =
-			    (uint32_t)ob[0] << 24 | (uint32_t)ob[1] << 16 |
-			    (uint32_t)ob[2] << 8 | (uint32_t)ob[3];
+			opts->volumes[vi].flags = flags;
+			opts->volumes[vi].clear = clear;
+			opts->volumes[vi].propagation = prop;
+			opts->volumes[vi].recursive = rec;
+			if (data_len > 0)
+				memcpy(opts->volumes[vi].data,
+				       hdr + 12, data_len);
+			opts->volumes[vi].data[data_len] = '\0';
 			opts->num_volumes++;
 			break;
 		}
@@ -2470,6 +2511,19 @@ int main(int argc, char *argv[])
 			close(fd);
 		}
 	}
+
+	/*
+	 * CVE-2019-5736 defense: copy self into a sealed memfd and
+	 * re-exec from it, so a compromised privileged container cannot
+	 * rewrite the on-disk runtime binary via /proc/<rt-pid>/exe.
+	 * Best-effort: falls through unprotected on old kernels / LSM
+	 * denials. Idempotent via ERLKOENIG_RT_CLONED sentinel.
+	 * Runs AFTER cgroup move so the ~172 KB memfd counts toward the
+	 * container cgroup, not the beam. Must run BEFORE we open any
+	 * fd that we care about keeping, since re-exec closes everything
+	 * non-CLOEXEC.
+	 */
+	ek_cloned_reexec(argv);
 
 	erlkoenig_log_init();
 

@@ -320,7 +320,13 @@ int ek_bind_mount_dev(const char *rootfs, int rootfs_fd, const char *name,
  */
 static int ek_mkdir_p(const char *base, const char *relpath, mode_t mode)
 {
-	char path[ERLKOENIG_MAX_PATH];
+	/*
+	 * Buffer sized for rootfs prefix + full dest path. Callers pass
+	 * a short rootfs (ERLKOENIG_ROOTFS_MAX) and a dest from the
+	 * volume struct (ERLKOENIG_MAX_PATH), so the concatenation can
+	 * exceed ERLKOENIG_MAX_PATH even though each component fits.
+	 */
+	char path[ERLKOENIG_MAX_PATH + ERLKOENIG_ROOTFS_MAX];
 	int ret;
 	size_t base_len = strlen(base);
 
@@ -389,27 +395,65 @@ static int ek_validate_dest_path(const char *dest)
 }
 
 /*
+ * Bit-mask of MS_* flags that require a second MS_BIND|MS_REMOUNT pass.
+ * Linux silently ignores these on the initial MS_BIND; we have to set
+ * them on a remount. The subset mirrors what crun and util-linux
+ * consider "per-mount" security flags.
+ */
+#define EK_REMOUNT_FLAGS                                                   \
+	(MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME |       \
+	 MS_NODIRATIME | MS_RELATIME | MS_STRICTATIME)
+
+/*
+ * Translate wire-level EK_PROP_* enum to the kernel's MS_* propagation
+ * bit. Returns 0 for EK_PROP_NONE (caller must skip the set-propagation
+ * step entirely — MS_PRIVATE etc. are exclusive, you can't OR them).
+ */
+static unsigned long propagation_to_ms(uint8_t prop)
+{
+	switch (prop) {
+	case EK_PROP_PRIVATE:
+		return MS_PRIVATE;
+	case EK_PROP_SLAVE:
+		return MS_SLAVE;
+	case EK_PROP_SHARED:
+		return MS_SHARED;
+	case EK_PROP_UNBINDABLE:
+		return MS_UNBINDABLE;
+	case EK_PROP_NONE:
+	default:
+		return 0;
+	}
+}
+
+/*
  * ek_bind_mount_volume - Bind-mount a host directory into the container rootfs.
  * @rootfs:	Path to the rootfs root (before pivot_root)
- * @source:	Absolute host directory path
- * @dest:	Absolute container directory path
- * @opts:	EK_VOLUME_F_* flags
+ * @vol:	Full volume spec (paths, flags, propagation, data)
  *
  * The source must be an existing directory. The destination is created
  * (mkdir -p) under rootfs. The mount is done before pivot_root, so host
  * paths are still visible.
  *
- * For read-only mounts: initial MS_BIND followed by
- * MS_BIND|MS_REMOUNT|MS_RDONLY. Direct MS_RDONLY on initial bind-mount is not
- * reliable.
+ * Flow:
+ *   1. Initial MS_BIND[|MS_REC] — establishes the bind.
+ *   2. MS_REMOUNT with EK_REMOUNT_FLAGS if any are requested — Linux
+ *      ignores these on the first MS_BIND.
+ *   3. MS_<PROP>[|MS_REC] if propagation requested — separate call,
+ *      propagation bits are exclusive of other flags.
  *
  * Returns 0 on success, negative errno on failure.
  */
-int ek_bind_mount_volume(const char *rootfs, const char *source,
-			 const char *dest, uint32_t opts)
+int ek_bind_mount_volume(const char *rootfs,
+			 const struct erlkoenig_volume *vol)
 {
-	char target[ERLKOENIG_MAX_PATH];
+	/* rootfs prefix + dest — see ek_mkdir_p for the same rationale. */
+	char target[ERLKOENIG_MAX_PATH + ERLKOENIG_ROOTFS_MAX];
+	char fd_source[64];
 	struct stat st;
+	const char *source = vol->source;
+	const char *dest = vol->dest;
+	uint32_t flags = vol->flags;
 	int ret;
 
 	/*
@@ -437,7 +481,6 @@ int ek_bind_mount_volume(const char *rootfs, const char *source,
 		return -errno;
 	}
 
-	/* fstat on the FD — guaranteed same inode as open */
 	if (fstat(src_fd, &st)) {
 		LOG_SYSCALL("fstat(volume source)");
 		return -errno;
@@ -467,30 +510,61 @@ int ek_bind_mount_volume(const char *rootfs, const char *source,
 		return -ENAMETOOLONG;
 
 	/*
-	 * 5. Bind-mount via /proc/self/fd/<n> — uses the pinned inode
-	 * from open(), immune to path replacement between open and mount.
+	 * 5. Initial bind via /proc/self/fd/<n>. Using a user-supplied
+	 * MS_BIND isn't strictly necessary on the flags arg here (we
+	 * always want a bind), but honour MS_REC if the caller asked
+	 * for a recursive bind (e.g. `rbind`).
 	 */
-	char fd_source[64];
-
 	snprintf(fd_source, sizeof(fd_source), "/proc/self/fd/%d", src_fd);
-	ret = ek_mount(fd_source, target, NULL, MS_BIND, NULL,
+	unsigned long bind_flags = MS_BIND;
+	if (flags & MS_REC)
+		bind_flags |= MS_REC;
+	ret = ek_mount(fd_source, target, NULL, bind_flags, NULL,
 		       "mount(bind-volume)");
 	if (ret)
 		return ret;
 
-	/* 6. Read-only remount if requested */
-	if (opts & EK_VOLUME_F_READONLY) {
+	/*
+	 * 6. Apply per-mount flags (ro, nosuid, nodev, noexec, atime
+	 * family) via MS_REMOUNT. The kernel ignores these on the
+	 * first MS_BIND; Explicit remount is the canonical recipe.
+	 * `data` is fs-specific passthrough — for bind mounts this is
+	 * usually empty, but tmpfs/procfs paths go through here too.
+	 */
+	uint32_t remount_bits = flags & EK_REMOUNT_FLAGS;
+	int need_remount = remount_bits || vol->clear || vol->data[0];
+	if (need_remount) {
+		const char *data = vol->data[0] ? vol->data : NULL;
 		ret = ek_mount(NULL, target, NULL,
-			       MS_BIND | MS_REMOUNT | MS_RDONLY, NULL,
-			       "mount(remount-ro volume)");
+			       MS_BIND | MS_REMOUNT | remount_bits, data,
+			       "mount(remount volume)");
 		if (ret) {
 			umount2(target, MNT_DETACH);
 			return ret;
 		}
 	}
 
-	LOG_INFO("volume mounted: %s -> %s%s%s", source, rootfs, dest,
-		 (opts & EK_VOLUME_F_READONLY) ? " (ro)" : " (rw)");
+	/*
+	 * 7. Apply propagation if requested. Propagation flags are
+	 * exclusive of everything else — they need their own mount(2)
+	 * call with source/fstype/data set to NULL.
+	 */
+	unsigned long prop_ms = propagation_to_ms(vol->propagation);
+	if (prop_ms) {
+		unsigned long prop_flags = prop_ms;
+		if (vol->recursive)
+			prop_flags |= MS_REC;
+		ret = ek_mount(NULL, target, NULL, prop_flags, NULL,
+			       "mount(propagation volume)");
+		if (ret) {
+			umount2(target, MNT_DETACH);
+			return ret;
+		}
+	}
+
+	LOG_INFO("volume mounted: %s -> %s%s (flags=0x%x prop=%u%s)",
+		 source, rootfs, dest, flags, vol->propagation,
+		 vol->recursive ? " rec" : "");
 	return 0;
 }
 
@@ -642,9 +716,7 @@ static int prepare_rootfs_erofs(const char *rootfs,
 
 		/* Bind-mount volumes */
 		for (uint8_t i = 0; i < opts->num_volumes; i++) {
-			ret = ek_bind_mount_volume(
-			    rootfs, opts->volumes[i].source,
-			    opts->volumes[i].dest, opts->volumes[i].opts);
+			ret = ek_bind_mount_volume(rootfs, &opts->volumes[i]);
 			if (ret)
 				return ret;
 		}
@@ -788,9 +860,7 @@ static int prepare_rootfs_in_child(const char *rootfs,
 
 	/* Bind-mount persistent volumes (before pivot_root) */
 	for (uint8_t i = 0; i < opts->num_volumes; i++) {
-		ret = ek_bind_mount_volume(rootfs, opts->volumes[i].source,
-					   opts->volumes[i].dest,
-					   opts->volumes[i].opts);
+		ret = ek_bind_mount_volume(rootfs, &opts->volumes[i]);
 		if (ret)
 			return ret;
 	}

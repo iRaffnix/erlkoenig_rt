@@ -1037,7 +1037,10 @@ static int do_test_bind_mount_volume_basic(void)
 	close(fd);
 
 	/* Bind-mount into rootfs */
-	int ret = ek_bind_mount_volume(rootfs, source, "/data", 0);
+	struct erlkoenig_volume vol = {0};
+	strncpy(vol.source, source, sizeof(vol.source) - 1);
+	strncpy(vol.dest, "/data", sizeof(vol.dest) - 1);
+	int ret = ek_bind_mount_volume(rootfs, &vol);
 	if (ret)
 		return 1;
 
@@ -1129,8 +1132,11 @@ static int do_test_bind_mount_volume_readonly(void)
 	close(fd);
 
 	/* Mount as read-only */
-	int ret = ek_bind_mount_volume(rootfs, source, "/config",
-				       EK_VOLUME_F_READONLY);
+	struct erlkoenig_volume vol = {0};
+	strncpy(vol.source, source, sizeof(vol.source) - 1);
+	strncpy(vol.dest, "/config", sizeof(vol.dest) - 1);
+	vol.flags = MS_RDONLY;
+	int ret = ek_bind_mount_volume(rootfs, &vol);
 	if (ret)
 		return 1;
 
@@ -1184,7 +1190,10 @@ END_TEST
 
 START_TEST(test_bind_mount_volume_bad_dest_relative)
 {
-	int ret = ek_bind_mount_volume("/tmp", "/tmp", "data/relative", 0);
+	struct erlkoenig_volume vol = {0};
+	strncpy(vol.source, "/tmp", sizeof(vol.source) - 1);
+	strncpy(vol.dest, "data/relative", sizeof(vol.dest) - 1);
+	int ret = ek_bind_mount_volume("/tmp", &vol);
 	ck_assert_int_eq(ret, -EINVAL);
 }
 END_TEST
@@ -1200,12 +1209,17 @@ END_TEST
 
 START_TEST(test_bind_mount_volume_bad_dest_traversal)
 {
+	struct erlkoenig_volume vol = {0};
 	int ret;
 
-	ret = ek_bind_mount_volume("/tmp", "/tmp", "/data/../../../etc", 0);
+	strncpy(vol.source, "/tmp", sizeof(vol.source) - 1);
+	strncpy(vol.dest, "/data/../../../etc", sizeof(vol.dest) - 1);
+	ret = ek_bind_mount_volume("/tmp", &vol);
 	ck_assert_int_eq(ret, -EINVAL);
 
-	ret = ek_bind_mount_volume("/tmp", "/tmp", "/data/./hidden", 0);
+	memset(vol.dest, 0, sizeof(vol.dest));
+	strncpy(vol.dest, "/data/./hidden", sizeof(vol.dest) - 1);
+	ret = ek_bind_mount_volume("/tmp", &vol);
 	ck_assert_int_eq(ret, -EINVAL);
 }
 END_TEST
@@ -1228,7 +1242,10 @@ START_TEST(test_bind_mount_volume_source_not_dir)
 	ck_assert(fd >= 0);
 	close(fd);
 
-	int ret = ek_bind_mount_volume("/tmp", tmpfile, "/data", 0);
+	struct erlkoenig_volume vol = {0};
+	strncpy(vol.source, tmpfile, sizeof(vol.source) - 1);
+	strncpy(vol.dest, "/data", sizeof(vol.dest) - 1);
+	int ret = ek_bind_mount_volume("/tmp", &vol);
 	ck_assert_int_eq(ret, -ENOTDIR);
 
 	unlink(tmpfile);
@@ -1245,8 +1262,11 @@ END_TEST
 
 START_TEST(test_bind_mount_volume_source_missing)
 {
-	int ret = ek_bind_mount_volume(
-	    "/tmp", "/tmp/ek_nonexistent_vol_dir_12345", "/data", 0);
+	struct erlkoenig_volume vol = {0};
+	strncpy(vol.source, "/tmp/ek_nonexistent_vol_dir_12345",
+		sizeof(vol.source) - 1);
+	strncpy(vol.dest, "/data", sizeof(vol.dest) - 1);
+	int ret = ek_bind_mount_volume("/tmp", &vol);
 	ck_assert_int_eq(ret, -ENOENT);
 }
 END_TEST
