@@ -721,24 +721,29 @@ static int prepare_rootfs_erofs(const char *rootfs,
 				return ret;
 		}
 
-		/* Write resolv.conf (goes to upper layer) */
-		_cleanup_close_ int fd =
-		    ek_openat2(rfd, "etc/resolv.conf",
-			       O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
-		if (fd >= 0) {
-			char resolv[48];
-			uint8_t *ip = (uint8_t *)&opts->dns_ip;
-
-			if (opts->dns_ip != 0)
+		/*
+		 * Write resolv.conf (goes to upper layer) iff a resolver
+		 * IP was explicitly passed. dns_ip == 0 means the operator
+		 * (via the strict-mode capability framework) declared this
+		 * container does NOT need DNS - leave /etc/resolv.conf
+		 * absent so getaddrinfo() fails fast and loudly instead of
+		 * silently falling back to a default that may or may not
+		 * route.
+		 */
+		if (opts->dns_ip != 0) {
+			_cleanup_close_ int fd =
+			    ek_openat2(rfd, "etc/resolv.conf",
+				       O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
+			if (fd >= 0) {
+				char resolv[48];
+				uint8_t *ip = (uint8_t *)&opts->dns_ip;
 				snprintf(resolv, sizeof(resolv),
 					 "nameserver %u.%u.%u.%u\n", ip[0],
 					 ip[1], ip[2], ip[3]);
-			else
-				snprintf(resolv, sizeof(resolv),
-					 "nameserver 10.0.0.1\n");
-			if (write(fd, resolv, strlen(resolv)) < 0)
-				LOG_WARN("write(resolv.conf): %s",
-					 strerror(errno));
+				if (write(fd, resolv, strlen(resolv)) < 0)
+					LOG_WARN("write(resolv.conf): %s",
+						 strerror(errno));
+			}
 		}
 	}
 
@@ -865,8 +870,13 @@ static int prepare_rootfs_in_child(const char *rootfs,
 			return ret;
 	}
 
-	/* Create /etc/resolv.conf via openat2 (RESOLVE_IN_ROOT) */
-	{
+	/*
+	 * Create /etc/resolv.conf only when a resolver IP was explicitly
+	 * passed. dns_ip == 0 means strict-mode opt-out (the operator
+	 * declared this container does NOT need DNS) - leave the file
+	 * absent so getaddrinfo() fails fast and loudly.
+	 */
+	if (opts->dns_ip != 0) {
 		_cleanup_close_ int fd =
 		    ek_openat2(rfd, "etc/resolv.conf",
 			       O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
@@ -877,15 +887,9 @@ static int prepare_rootfs_in_child(const char *rootfs,
 
 		char resolv[48];
 		uint8_t *ip = (uint8_t *)&opts->dns_ip;
-
-		if (opts->dns_ip != 0) {
-			snprintf(resolv, sizeof(resolv),
-				 "nameserver %u.%u.%u.%u\n", ip[0], ip[1],
-				 ip[2], ip[3]);
-		} else {
-			snprintf(resolv, sizeof(resolv),
-				 "nameserver 10.0.0.1\n");
-		}
+		snprintf(resolv, sizeof(resolv),
+			 "nameserver %u.%u.%u.%u\n", ip[0], ip[1],
+			 ip[2], ip[3]);
 
 		if (write(fd, resolv, strlen(resolv)) < 0) {
 			LOG_SYSCALL("write(resolv.conf)");
