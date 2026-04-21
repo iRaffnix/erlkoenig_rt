@@ -8,3 +8,7 @@ bin/
 compile_commands.json
 # Fuzz corpus auto-generated files (keep only hand-written seeds)
 test/fuzz/corpus/[0-9a-f][0-9a-f]*
+
+# Erlang test-runner cruft (libcheck builds + rebar artefacts)
+_build/
+rebar.lock

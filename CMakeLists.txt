@@ -7,6 +7,7 @@ set(CMAKE_C_EXTENSIONS ON)  # _GNU_SOURCE for clone(), pivot_root(), etc.
 
 add_executable(erlkoenig_rt
     src/erlkoenig_rt.c
+    src/ek_protocol.c
     src/erlkoenig_ns.c
     src/erlkoenig_netcfg.c
     src/erlkoenig_nft.c

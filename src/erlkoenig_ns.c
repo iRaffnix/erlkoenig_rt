@@ -1727,21 +1727,23 @@ int erlkoenig_spawn(const struct erlkoenig_spawn_opts *opts,
 			return -EINVAL;
 		}
 
-		if (access(opts->binary_path, X_OK)) {
-			ret = -errno;
-			LOG_ERR("binary not executable: %s (%s)",
-				opts->binary_path, strerror(errno));
-			return ret;
-		}
-
 		/*
-		 * Open binary FD before clone. The child copies the binary
+		 * Open binary FD before clone.  The child copies the binary
 		 * via this FD, avoiding path traversal issues.
+		 *
+		 * Previously we did access(X_OK) here before the open() as a
+		 * friendly-error convenience.  That pattern is a classic
+		 * TOCTOU (CERT-C FIO01-C): an attacker with write access to
+		 * the parent directory could swap the file between the
+		 * check and the use, and access() checks REAL-uid while
+		 * open() uses effective-uid — two different security
+		 * views.  The executable-bit check that actually matters
+		 * happens at execve() time inside the container anyway.
 		 */
 		binary_fd = open(opts->binary_path, O_RDONLY | O_CLOEXEC);
 		if (binary_fd < 0) {
 			ret = -errno;
-			LOG_ERR("open(O_PATH) %s: %s", opts->binary_path,
+			LOG_ERR("open %s: %s", opts->binary_path,
 				strerror(errno));
 			return ret;
 		}
@@ -1752,13 +1754,11 @@ int erlkoenig_spawn(const struct erlkoenig_spawn_opts *opts,
 		 * contention (LOOP_CTL_GET_FREE is serialized). The child
 		 * only needs to mount() the ready loop device — one syscall
 		 * instead of four.
+		 *
+		 * The previous access(R_OK) check before open() was a
+		 * TOCTOU gap; we now rely on open() itself for the
+		 * readability check below (same rationale as binary_path).
 		 */
-		if (access(opts->image_path, R_OK)) {
-			ret = -errno;
-			LOG_ERR("image not readable: %s (%s)", opts->image_path,
-				strerror(errno));
-			return ret;
-		}
 
 		int ctl = open("/dev/loop-control", O_RDWR | O_CLOEXEC);
 		if (ctl < 0) {

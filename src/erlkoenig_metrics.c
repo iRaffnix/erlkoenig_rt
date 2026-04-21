@@ -477,7 +477,7 @@ static int ringbuf_mmap_setup(struct ek_metrics_ctx *ctx)
 	}
 
 	/* Step 2: mmap producer + data pages (read-only) */
-	size_t producer_size = page_size + 2 * EK_METRICS_RINGBUF_SIZE;
+	size_t producer_size = page_size + (size_t)2 * EK_METRICS_RINGBUF_SIZE;
 	void *producer = mmap(NULL, producer_size, PROT_READ, MAP_SHARED,
 			      ctx->ringbuf_fd, (off_t)page_size);
 	if (producer == MAP_FAILED) {
@@ -522,11 +522,28 @@ int ek_metrics_consume(struct ek_metrics_ctx *ctx,
 	int count = 0;
 
 	while (cons_pos < prod_pos) {
-		/* Record header at data offset (masked to ring size) */
+		/*
+		 * Record header at data offset (masked to ring size).
+		 *
+		 * Memory ordering: the producer_pos load above used
+		 * memory_order_acquire — that synchronises with the kernel
+		 * producer's release of producer_pos, which happens AFTER
+		 * all record-body writes are published.  Therefore a plain
+		 * memcpy here sees all record bytes that were present when
+		 * producer_pos was advanced past this record.  No separate
+		 * atomic load on `len` is needed.
+		 *
+		 * Alignment: the BPF ringbuf contract guarantees 8-byte
+		 * record alignment (see the (total + 7) & ~7U rounding at
+		 * the bottom of the loop), so `hdr_bytes` is always
+		 * properly aligned.  We still use memcpy to stay portable
+		 * on strict-alignment targets — the compiler folds it to
+		 * an aligned 4-byte load on x86 and ARM64.
+		 */
 		size_t offset = (size_t)(cons_pos % ctx->ring_data_size);
-		uint32_t *hdr = (uint32_t *)(data_base + offset);
-		uint32_t len = atomic_load_explicit((_Atomic uint32_t *)hdr,
-						    memory_order_acquire);
+		uint8_t *hdr_bytes = data_base + offset;
+		uint32_t len;
+		memcpy(&len, hdr_bytes, sizeof(len));
 
 		/* Check busy bit — record still being written */
 		if (len & BPF_RINGBUF_BUSY_BIT)
@@ -538,12 +555,16 @@ int ek_metrics_consume(struct ek_metrics_ctx *ctx,
 		/* Data follows the 8-byte header */
 		uint8_t *record_data = data_base + offset + BPF_RINGBUF_HDR_SZ;
 
-		/* Deliver event (skip discarded records) */
+		/*
+		 * Deliver event (skip discarded records).  Use memcpy into
+		 * an aligned local rather than casting record_data directly,
+		 * so this stays sound on strict-alignment platforms.
+		 */
 		if (!(len & BPF_RINGBUF_DISCARD_BIT) &&
 		    record_len >= sizeof(struct ek_metrics_event)) {
-			const struct ek_metrics_event *ev =
-			    (const struct ek_metrics_event *)record_data;
-			callback(ev, userdata);
+			struct ek_metrics_event ev;
+			memcpy(&ev, record_data, sizeof(ev));
+			callback(&ev, userdata);
 			count++;
 		}
 

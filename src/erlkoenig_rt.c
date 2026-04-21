@@ -79,6 +79,7 @@
 #include "erlkoenig_cg.h"
 #include "erlkoenig_tlv.h"
 #include "erlkoenig_nft.h"
+#include "ek_protocol.h"
 #include "erlkoenig_cloned.h"
 
 #include "erlkoenig_xdp_api.h"
@@ -120,6 +121,16 @@ static struct {
 	char cgroup_path[4096];	   /* per-container cgroup path */
 	uint32_t container_ip_net; /* Container IP (network byte order, for XDP
 				      cleanup) */
+	/*
+	 * Synchronous IPVLAN-slave teardown state.  Populated at
+	 * successful NET_SETUP and consumed by reap_child() BEFORE
+	 * REPLY_EXITED is sent, so the kernel has freed the slave
+	 * before Erlang sees the child exit and the pod-sup re-spawns
+	 * a replacement on the same parent dummy.  Closes the EADDRINUSE
+	 * race for :one_for_all / :rest_for_one pod strategies.
+	 */
+	int container_netns_fd;	           /* Open fd to container's netns */
+	char container_ifname[IF_NAMESIZE]; /* Slave ifname inside that netns */
 } g_state;
 
 /*
@@ -316,207 +327,17 @@ static int send_reply_status(uint8_t state, uint32_t pid, uint64_t uptime_ms)
 /* -- Command handlers --------------------------------------------- */
 
 /*
- * strbuf_copy - Copy a string into opts->strbuf, null-terminated.
- * Returns pointer to the copy, or NULL if strbuf is full.
+ * Pure TLV-payload parsers (ek_parse_cmd_spawn/kill/net_setup/resize)
+ * live in src/ek_protocol.c so the libFuzzer harnesses under
+ * test/fuzz link against the exact same code paths that ship in
+ * production. Do NOT inline parsers back here.
  */
-static char *strbuf_copy(struct erlkoenig_spawn_opts *opts, const uint8_t *data,
-			 size_t len)
-{
-	if (opts->strbuf_used + len + 1 > sizeof(opts->strbuf))
-		return NULL;
 
-	char *dst = opts->strbuf + opts->strbuf_used;
-	memcpy(dst, data, len);
-	dst[len] = '\0';
-	opts->strbuf_used += len + 1;
-	return dst;
-}
-
-/*
- * parse_cmd_spawn - Parse a TLV SPAWN command into spawn options.
- *
- * Pure parsing function — no side effects, no global state, no I/O.
- * TLV: iterate attributes, switch on type, skip unknown optional,
- * reject unknown critical.
- *
- * Returns 0 on success, negative errno on parse error.
- */
-static int parse_cmd_spawn(const uint8_t *payload, size_t len,
-			   struct erlkoenig_spawn_opts *opts)
-{
-	struct erlkoenig_buf b;
-	struct ek_tlv attr;
-
-	*opts = (struct erlkoenig_spawn_opts){0};
-	opts->uid = 65534;
-	opts->gid = 65534;
-	opts->argv[0] = (char *)"/app";
-	opts->argc = 1;
-	opts->envp[0] = (char *)"HOME=/tmp";
-	opts->envp[1] = (char *)"PATH=/";
-	opts->envc = 2;
-
-	erlkoenig_buf_init(&b, (uint8_t *)payload, len);
-
-	while (ek_tlv_next(&b, &attr) == 0) {
-		switch (attr.type) {
-		case EK_ATTR_PATH:
-			if (attr.len == 0 || attr.len >= ERLKOENIG_MAX_PATH)
-				return -ENAMETOOLONG;
-			memcpy(opts->binary_path, attr.value, attr.len);
-			opts->binary_path[attr.len] = '\0';
-			break;
-		case EK_ATTR_UID:
-			opts->uid = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_GID:
-			opts->gid = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_CAPS:
-			opts->caps_keep = ek_tlv_u64(&attr);
-			break;
-		case EK_ATTR_ARG:
-			if (opts->argc >= ERLKOENIG_MAX_ARGS + 1)
-				return -E2BIG;
-			opts->argv[opts->argc] =
-			    strbuf_copy(opts, attr.value, attr.len);
-			if (!opts->argv[opts->argc])
-				return -ENOMEM;
-			opts->argc++;
-			break;
-		case EK_ATTR_FLAGS:
-			opts->flags = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_ENV: {
-			if (opts->envc >= ERLKOENIG_MAX_ENV)
-				return -E2BIG;
-			const uint8_t *sep = memchr(attr.value, '\0', attr.len);
-			if (!sep)
-				return -EINVAL;
-			size_t klen = (size_t)(sep - attr.value);
-			size_t vlen = attr.len - klen - 1;
-			size_t elen = klen + 1 + vlen;
-			if (opts->strbuf_used + elen + 1 > sizeof(opts->strbuf))
-				return -ENOMEM;
-			char *dst = opts->strbuf + opts->strbuf_used;
-			memcpy(dst, attr.value, klen);
-			dst[klen] = '=';
-			memcpy(dst + klen + 1, sep + 1, vlen);
-			dst[elen] = '\0';
-			opts->strbuf_used += elen + 1;
-			opts->envp[opts->envc++] = dst;
-			break;
-		}
-		case EK_ATTR_ROOTFS_MB:
-			opts->rootfs_size_mb = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_SECCOMP:
-			opts->seccomp_profile = ek_tlv_u8(&attr);
-			break;
-		case EK_ATTR_DNS_IP:
-			opts->dns_ip = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_VOLUME: {
-			if (opts->num_volumes >= ERLKOENIG_MAX_VOLUMES)
-				return -E2BIG;
-			/*
-			 * Wire: host\0 cont\0 flags:u32 clear:u32 prop:u8
-			 *       rec:u8 data_len:u16 data:data_len
-			 * See EK_VOLUME_TLV_MIN in erlkoenig_proto.h.
-			 */
-			if (attr.len < EK_VOLUME_TLV_MIN)
-				return -EINVAL;
-			const uint8_t *sep1 = memchr(attr.value, '\0', attr.len);
-			if (!sep1)
-				return -EINVAL;
-			size_t slen = (size_t)(sep1 - attr.value);
-			size_t after_src = slen + 1;
-			if (after_src >= attr.len)
-				return -EINVAL;
-			const uint8_t *sep2 = memchr(attr.value + after_src,
-						     '\0', attr.len - after_src);
-			if (!sep2)
-				return -EINVAL;
-			size_t dlen =
-			    (size_t)(sep2 - (attr.value + after_src));
-			size_t after_dst = after_src + dlen + 1;
-			/* Fixed header after the two NUL-terminated paths:
-			 * 4+4+1+1+2 = 12 bytes, then variable data. */
-			if (attr.len - after_dst < 12)
-				return -EINVAL;
-			if (slen >= ERLKOENIG_MAX_PATH - 1 ||
-			    dlen >= ERLKOENIG_MAX_PATH - 1)
-				return -ENAMETOOLONG;
-			const uint8_t *hdr = attr.value + after_dst;
-			uint32_t flags = (uint32_t)hdr[0] << 24
-					 | (uint32_t)hdr[1] << 16
-					 | (uint32_t)hdr[2] << 8
-					 | (uint32_t)hdr[3];
-			uint32_t clear = (uint32_t)hdr[4] << 24
-					 | (uint32_t)hdr[5] << 16
-					 | (uint32_t)hdr[6] << 8
-					 | (uint32_t)hdr[7];
-			uint8_t prop = hdr[8];
-			uint8_t rec = hdr[9];
-			uint16_t data_len =
-			    (uint16_t)hdr[10] << 8 | (uint16_t)hdr[11];
-			if ((size_t)data_len != attr.len - after_dst - 12)
-				return -EINVAL;
-			if (data_len >= ERLKOENIG_MAX_MOUNT_DATA)
-				return -ENAMETOOLONG;
-			if (prop > EK_PROP_UNBINDABLE)
-				return -EINVAL;
-			uint8_t vi = opts->num_volumes;
-			memcpy(opts->volumes[vi].source, attr.value, slen);
-			opts->volumes[vi].source[slen] = '\0';
-			memcpy(opts->volumes[vi].dest,
-			       attr.value + after_src, dlen);
-			opts->volumes[vi].dest[dlen] = '\0';
-			opts->volumes[vi].flags = flags;
-			opts->volumes[vi].clear = clear;
-			opts->volumes[vi].propagation = prop;
-			opts->volumes[vi].recursive = rec;
-			if (data_len > 0)
-				memcpy(opts->volumes[vi].data,
-				       hdr + 12, data_len);
-			opts->volumes[vi].data[data_len] = '\0';
-			opts->num_volumes++;
-			break;
-		}
-		case EK_ATTR_MEMORY_MAX:
-			opts->memory_max = ek_tlv_u64(&attr);
-			break;
-		case EK_ATTR_PIDS_MAX:
-			opts->pids_max = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_CPU_WEIGHT:
-			opts->cpu_weight = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_IMAGE_PATH:
-			if (attr.len == 0 || attr.len >= ERLKOENIG_MAX_PATH)
-				return -ENAMETOOLONG;
-			memcpy(opts->image_path, attr.value, attr.len);
-			opts->image_path[attr.len] = '\0';
-			break;
-		default:
-			if (attr.type & EK_TLV_CRITICAL_BIT)
-				return -EPROTO;
-			break;
-		}
-	}
-
-	opts->argv[opts->argc] = NULL;
-	opts->envp[opts->envc] = NULL;
-
-	if (opts->binary_path[0] == '\0')
-		return -EINVAL;
-	return 0;
-}
 
 /*
  * handle_cmd_spawn - Create a new container.
  *
- * Parses the SPAWN payload via parse_cmd_spawn() (pure function),
+ * Parses the SPAWN payload via ek_parse_cmd_spawn() (pure function),
  * then executes the spawn via erlkoenig_spawn() (syscalls).
  */
 static void handle_cmd_spawn(const uint8_t *payload, size_t len)
@@ -529,7 +350,7 @@ static void handle_cmd_spawn(const uint8_t *payload, size_t len)
 		return;
 	}
 
-	ret = parse_cmd_spawn(payload, len, &opts);
+	ret = ek_parse_cmd_spawn(payload, len, &opts);
 	if (ret) {
 		send_reply_error((int32_t)ret, strerror(-ret));
 		return;
@@ -723,12 +544,24 @@ static void harden_runtime_after_go(void)
 	    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
 	    BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
 		     offsetof(struct seccomp_data, nr)),
-	    /* Namespace/mount operations — setup is done */
+	    /* Namespace/mount operations — mostly locked down.
+	     *
+	     * setns() is allowed: the runtime needs to re-enter the
+	     * container's network namespace in reap_child() to
+	     * synchronously delete the IPVLAN slave BEFORE sending
+	     * REPLY_EXITED (see erlkoenig_netcfg_teardown_slave).
+	     * Without this sync point, the kernel cleans up the slave
+	     * asynchronously after netns ref drops, leaving a narrow
+	     * window where pod-supervisor respawn trips EADDRINUSE on
+	     * the parent dummy.  setns alone (without unshare/clone)
+	     * can only enter existing namespaces that the runtime
+	     * already has an fd for — no new privilege.
+	     */
 	    RT_DENY(SYS_mount),
 	    RT_DENY(SYS_umount2),
 	    RT_DENY(SYS_pivot_root),
 	    RT_DENY(SYS_unshare),
-	    RT_DENY(SYS_setns),
+	    /* RT_DENY(SYS_setns) — intentionally allowed, see above */
 	    /* Process creation — runtime doesn't fork after setup */
 	    RT_DENY(SYS_clone),
 	    RT_DENY(SYS_clone3),
@@ -844,28 +677,6 @@ static void handle_cmd_go(void)
 	send_reply_ok(NULL, 0);
 }
 
-/*
- * parse_cmd_kill - Parse a KILL command payload.
- * Pure function. Returns signal number or negative errno.
- */
-static int parse_cmd_kill(const uint8_t *payload, size_t len,
-			  uint8_t *signal_out)
-{
-	struct erlkoenig_buf b;
-	struct ek_tlv attr;
-
-	*signal_out = 0;
-	erlkoenig_buf_init(&b, (uint8_t *)payload, len);
-	while (ek_tlv_next(&b, &attr) == 0) {
-		if (attr.type == EK_ATTR_SIGNAL)
-			*signal_out = ek_tlv_u8(&attr);
-		else if (attr.type & EK_TLV_CRITICAL_BIT)
-			return -EPROTO;
-	}
-	if (*signal_out == 0 || *signal_out > 64)
-		return -EINVAL;
-	return 0;
-}
 
 static void handle_cmd_kill(const uint8_t *payload, size_t len)
 {
@@ -876,7 +687,7 @@ static void handle_cmd_kill(const uint8_t *payload, size_t len)
 		return;
 	}
 
-	if (parse_cmd_kill(payload, len, &signal_num)) {
+	if (ek_parse_cmd_kill(payload, len, &signal_num)) {
 		send_reply_error(-EINVAL, "invalid kill command");
 		return;
 	}
@@ -900,70 +711,10 @@ static void handle_cmd_kill(const uint8_t *payload, size_t len)
  * Wire: <<IfName:str16, IpA:8, IpB:8, IpC:8, IpD:8,
  *          Prefixlen:8, GwA:8, GwB:8, GwC:8, GwD:8>>
  */
-struct net_setup_args {
-	char ifname[IF_NAMESIZE];
-	uint32_t ip;
-	uint32_t gateway;
-	uint8_t prefixlen;
-	uint8_t ip_bytes[4];
-	uint8_t gw_bytes[4];
-};
-
-/*
- * parse_cmd_net_setup - Parse a NET_SETUP command payload.
- * Pure function. Returns 0 on success, negative errno on error.
- */
-static int parse_cmd_net_setup(const uint8_t *payload, size_t len,
-			       struct net_setup_args *args)
-{
-	struct erlkoenig_buf b;
-	struct ek_tlv attr;
-
-	memset(args, 0, sizeof(*args));
-	erlkoenig_buf_init(&b, (uint8_t *)payload, len);
-
-	while (ek_tlv_next(&b, &attr) == 0) {
-		switch (attr.type) {
-		case EK_ATTR_IFNAME:
-			if (attr.len == 0 || attr.len >= IF_NAMESIZE)
-				return -EINVAL;
-			memcpy(args->ifname, attr.value, attr.len);
-			args->ifname[attr.len] = '\0';
-			break;
-		case EK_ATTR_CONTAINER_IP:
-			args->ip = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_GATEWAY_IP:
-			args->gateway = ek_tlv_u32(&attr);
-			break;
-		case EK_ATTR_PREFIXLEN:
-			args->prefixlen = ek_tlv_u8(&attr);
-			break;
-		default:
-			if (attr.type & EK_TLV_CRITICAL_BIT)
-				return -EPROTO;
-			break;
-		}
-	}
-
-	/* Decompose IP for logging */
-	args->ip_bytes[0] = (uint8_t)(args->ip >> 24);
-	args->ip_bytes[1] = (uint8_t)(args->ip >> 16);
-	args->ip_bytes[2] = (uint8_t)(args->ip >> 8);
-	args->ip_bytes[3] = (uint8_t)(args->ip);
-	args->gw_bytes[0] = (uint8_t)(args->gateway >> 24);
-	args->gw_bytes[1] = (uint8_t)(args->gateway >> 16);
-	args->gw_bytes[2] = (uint8_t)(args->gateway >> 8);
-	args->gw_bytes[3] = (uint8_t)(args->gateway);
-
-	if (args->ifname[0] == '\0')
-		return -EINVAL;
-	return 0;
-}
 
 static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
 {
-	struct net_setup_args args;
+	struct ek_net_setup_args args;
 	int ret;
 
 	if (g_state.state != STATE_CREATED) {
@@ -971,7 +722,7 @@ static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
 		return;
 	}
 
-	if (parse_cmd_net_setup(payload, len, &args)) {
+	if (ek_parse_cmd_net_setup(payload, len, &args)) {
 		send_reply_error(-EINVAL, "invalid net_setup command");
 		return;
 	}
@@ -987,6 +738,30 @@ static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
 	if (ret) {
 		send_reply_error((int32_t)ret, strerror(-ret));
 		return;
+	}
+
+	/*
+	 * Capture netns fd + ifname for the sync teardown in reap_child.
+	 * We open a fresh fd rather than reusing any existing one so the
+	 * lifetime is bound to g_state, not the netcfg_setup call.
+	 */
+	if (g_state.container_netns_fd >= 0) {
+		close(g_state.container_netns_fd);
+		g_state.container_netns_fd = -1;
+	}
+	{
+		char ns_path[64];
+		snprintf(ns_path, sizeof(ns_path), "/proc/%d/ns/net",
+			 (int)g_state.ct.child_pid);
+		g_state.container_netns_fd =
+			open(ns_path, O_RDONLY | O_CLOEXEC);
+		if (g_state.container_netns_fd < 0)
+			LOG_WARN("NET_SETUP: cannot open %s for later "
+				 "teardown: %s", ns_path, strerror(errno));
+		/* Ifname copy, NUL-terminated */
+		strncpy(g_state.container_ifname, args.ifname,
+			IF_NAMESIZE - 1);
+		g_state.container_ifname[IF_NAMESIZE - 1] = '\0';
 	}
 
 	/* Register XDP route if steering is active.
@@ -1243,12 +1018,29 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 			close(fd);
 		}
 
-		/* Restore read-only rootfs */
-		mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY | MS_BIND, NULL);
+		/*
+		 * Restore read-only rootfs.  On failure we log and proceed
+		 * to the chroot/setns restore — a stuck RW remount is bad
+		 * but a stuck chroot is worse (we'd operate on container
+		 * root for every subsequent request).
+		 */
+		if (mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY | MS_BIND,
+			  NULL))
+			LOG_ERR("remount ro after write_file: %s",
+				strerror(errno));
 
-		/* Restore original root and mount namespace */
-		fchdir(orig_root_fd);
-		chroot(".");
+		/*
+		 * Restore original root and mount namespace.  A failure here
+		 * means the runtime process is stuck inside the container
+		 * rootfs — subsequent commands would see the wrong
+		 * filesystem view.  Terminate rather than risk it: the
+		 * supervisor will spawn a fresh runtime on the next request.
+		 */
+		if (fchdir(orig_root_fd) || chroot(".")) {
+			LOG_ERR("FATAL: cannot restore root after write_file: %s",
+				strerror(errno));
+			_exit(1);
+		}
 		if (setns(orig_mnt_fd, CLONE_NEWNS)) {
 			LOG_ERR("FATAL: cannot restore mount namespace: %s",
 				strerror(errno));
@@ -1311,37 +1103,6 @@ static void handle_cmd_stdin(const uint8_t *payload, size_t len)
  *
  * Wire: <<Rows:16, Cols:16>>
  */
-/*
- * parse_cmd_resize - Parse a RESIZE command payload.
- * Pure function. Returns 0 on success, negative errno on error.
- */
-static int parse_cmd_resize(const uint8_t *payload, size_t len, uint16_t *rows,
-			    uint16_t *cols)
-{
-	struct erlkoenig_buf b;
-	struct ek_tlv attr;
-
-	*rows = 0;
-	*cols = 0;
-	erlkoenig_buf_init(&b, (uint8_t *)payload, len);
-	while (ek_tlv_next(&b, &attr) == 0) {
-		switch (attr.type) {
-		case EK_ATTR_ROWS:
-			*rows = ek_tlv_u16(&attr);
-			break;
-		case EK_ATTR_COLS:
-			*cols = ek_tlv_u16(&attr);
-			break;
-		default:
-			if (attr.type & EK_TLV_CRITICAL_BIT)
-				return -EPROTO;
-			break;
-		}
-	}
-	if (*rows == 0 || *cols == 0)
-		return -EINVAL;
-	return 0;
-}
 
 static void handle_cmd_resize(const uint8_t *payload, size_t len)
 {
@@ -1357,7 +1118,7 @@ static void handle_cmd_resize(const uint8_t *payload, size_t len)
 		return;
 	}
 
-	if (parse_cmd_resize(payload, len, &rows, &cols)) {
+	if (ek_parse_cmd_resize(payload, len, &rows, &cols)) {
 		send_reply_error(-EINVAL, "invalid resize command");
 		return;
 	}
@@ -1696,6 +1457,32 @@ static void reap_child(void)
 	g_state.state = STATE_STOPPED;
 	g_state.exit_code = exit_code;
 	g_state.term_signal = term_signal;
+
+	/*
+	 * SYNC SLAVE TEARDOWN — see g_state.container_netns_fd comment.
+	 * Must happen BEFORE REPLY_EXITED, so Erlang's gen_statem exit
+	 * event observers only see the container as dead AFTER the
+	 * kernel has freed the IPVLAN slave.  Without this, the
+	 * pod-supervisor can respawn a replacement on the same parent
+	 * dummy before the kernel cleans up the dying slave, tripping
+	 * EADDRINUSE in the new `ip addr add`.
+	 */
+	if (g_state.container_netns_fd >= 0 &&
+	    g_state.container_ifname[0] != '\0') {
+		int tdret = erlkoenig_netcfg_teardown_slave(
+				g_state.container_netns_fd,
+				g_state.container_ifname);
+		if (tdret && tdret != -ENODEV)
+			LOG_WARN("slave teardown %s failed: %s",
+				 g_state.container_ifname,
+				 strerror(-tdret));
+		else
+			LOG_INFO("slave %s torn down before REPLY_EXITED",
+				 g_state.container_ifname);
+		close(g_state.container_netns_fd);
+		g_state.container_netns_fd = -1;
+		g_state.container_ifname[0] = '\0';
+	}
 
 	if (g_connected) {
 		send_reply_exited(exit_code, term_signal);
@@ -2551,6 +2338,7 @@ int main(int argc, char *argv[])
 	g_state.ct.exec_err_fd = -1;
 	g_state.ct.stdin_fd = -1;
 	g_state.ct.pty_master = -1;
+	g_state.container_netns_fd = -1;
 	ek_metrics_ctx_init(&g_state.metrics);
 
 	/* Initialize XDP packet steering if requested */

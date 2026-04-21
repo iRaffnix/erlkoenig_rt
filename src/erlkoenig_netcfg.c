@@ -52,6 +52,21 @@
 #define NL_ATTR_HDRLEN	   ((size_t)4)
 #define NL_ATTR_ALIGN(len) (((len) + 3U) & ~3U)
 
+/*
+ * Write an NLA header at `buf + off`.  The caller-computed `off` is
+ * always 4-aligned (NL_ATTR_ALIGN above), but `buf` is a char* so
+ * the compiler can't prove alignment.  memcpy stays portable on
+ * strict-alignment platforms (ARM) and the compiler folds it to
+ * an aligned 4-byte store on x86.
+ */
+static inline void nl_put_attr_hdr(void *buf, size_t off, uint16_t len,
+				   uint16_t type)
+{
+	uint8_t *p = (uint8_t *)buf + off;
+	memcpy(p, &len, sizeof(len));
+	memcpy(p + sizeof(len), &type, sizeof(type));
+}
+
 /* -- Netlink helpers ---------------------------------------------- */
 
 static int nl_open(void)
@@ -145,7 +160,15 @@ static int nl_get_ifindex(int nlfd, const char *ifname)
 	nh = (struct nlmsghdr *)resp;
 
 	if (nh->nlmsg_type == NLMSG_ERROR) {
-		struct nlmsgerr *err = (struct nlmsgerr *)NLMSG_DATA(nh);
+		struct nlmsgerr *err;
+		/*
+		 * Guard against truncated NLMSG_ERROR (kernel buffer full,
+		 * hostile NET_ADMIN peer, etc).  Without this we'd read
+		 * past the recv'd bytes into the response buffer tail.
+		 */
+		if ((size_t)n < NLMSG_LENGTH(sizeof(struct nlmsgerr)))
+			return -EBADMSG;
+		err = (struct nlmsgerr *)NLMSG_DATA(nh);
 		return err->error;
 	}
 
@@ -203,14 +226,12 @@ static int nl_add_addr(int nlfd, int ifindex, uint32_t ip, uint8_t prefixlen)
 	off = 0;
 
 	/* IFA_LOCAL */
-	*(uint16_t *)(req.attrs + off + 0) = attr_len;
-	*(uint16_t *)(req.attrs + off + 2) = IFA_LOCAL;
+	nl_put_attr_hdr(req.attrs, off, attr_len, IFA_LOCAL);
 	memcpy(req.attrs + off + NL_ATTR_HDRLEN, &ip, 4);
 	off += NL_ATTR_ALIGN(attr_len);
 
 	/* IFA_ADDRESS */
-	*(uint16_t *)(req.attrs + off + 0) = attr_len;
-	*(uint16_t *)(req.attrs + off + 2) = IFA_ADDRESS;
+	nl_put_attr_hdr(req.attrs, off, attr_len, IFA_ADDRESS);
 	memcpy(req.attrs + off + NL_ATTR_HDRLEN, &ip, 4);
 	off += NL_ATTR_ALIGN(attr_len);
 
@@ -368,42 +389,43 @@ static int nl_create_veth(int nlfd, const char *host_name,
 	off = NLMSG_LENGTH(sizeof(struct ifinfomsg));
 
 	/* -- IFLA_IFNAME(host) -- */
-	*(uint16_t *)(buf + off + 0) = (uint16_t)(NL_ATTR_HDRLEN + host_len);
-	*(uint16_t *)(buf + off + 2) = IFLA_IFNAME;
+	nl_put_attr_hdr(buf, off, (uint16_t)(NL_ATTR_HDRLEN + host_len),
+			IFLA_IFNAME);
 	memcpy(buf + off + NL_ATTR_HDRLEN, host_name, host_len);
 	off += host_ifname_sz;
 
 	/* -- IFLA_LINKINFO (NLA_F_NESTED) -- */
-	*(uint16_t *)(buf + off + 0) =
-	    (uint16_t)(NL_ATTR_HDRLEN + info_kind_sz + info_data_sz);
-	*(uint16_t *)(buf + off + 2) = IFLA_LINKINFO | NLA_F_NESTED;
+	nl_put_attr_hdr(buf, off,
+			(uint16_t)(NL_ATTR_HDRLEN + info_kind_sz +
+				   info_data_sz),
+			IFLA_LINKINFO | NLA_F_NESTED);
 	off += NL_ATTR_HDRLEN;
 
 	/* IFLA_INFO_KIND("veth") */
-	*(uint16_t *)(buf + off + 0) = (uint16_t)(NL_ATTR_HDRLEN + 5);
-	*(uint16_t *)(buf + off + 2) = IFLA_INFO_KIND;
+	nl_put_attr_hdr(buf, off, (uint16_t)(NL_ATTR_HDRLEN + 5),
+			IFLA_INFO_KIND);
 	memcpy(buf + off + NL_ATTR_HDRLEN, "veth", 5);
 	off += info_kind_sz;
 
 	/* IFLA_INFO_DATA (NLA_F_NESTED) */
-	*(uint16_t *)(buf + off + 0) =
-	    (uint16_t)(NL_ATTR_HDRLEN + veth_peer_sz);
-	*(uint16_t *)(buf + off + 2) = IFLA_INFO_DATA | NLA_F_NESTED;
+	nl_put_attr_hdr(buf, off, (uint16_t)(NL_ATTR_HDRLEN + veth_peer_sz),
+			IFLA_INFO_DATA | NLA_F_NESTED);
 	off += NL_ATTR_HDRLEN;
 
 	/* VETH_INFO_PEER (NLA_F_NESTED) */
-	*(uint16_t *)(buf + off + 0) =
-	    (uint16_t)(NL_ATTR_HDRLEN + sizeof(struct ifinfomsg) +
-		       peer_ifname_sz);
-	*(uint16_t *)(buf + off + 2) = 1 | NLA_F_NESTED; /* VETH_INFO_PEER=1 */
+	nl_put_attr_hdr(buf, off,
+			(uint16_t)(NL_ATTR_HDRLEN +
+				   sizeof(struct ifinfomsg) +
+				   peer_ifname_sz),
+			1 | NLA_F_NESTED); /* VETH_INFO_PEER=1 */
 	off += NL_ATTR_HDRLEN;
 
 	/* Embedded ifinfomsg (zeroed — already memset) */
 	off += sizeof(struct ifinfomsg);
 
 	/* IFLA_IFNAME(peer) */
-	*(uint16_t *)(buf + off + 0) = (uint16_t)(NL_ATTR_HDRLEN + peer_len);
-	*(uint16_t *)(buf + off + 2) = IFLA_IFNAME;
+	nl_put_attr_hdr(buf, off, (uint16_t)(NL_ATTR_HDRLEN + peer_len),
+			IFLA_IFNAME);
 	memcpy(buf + off + NL_ATTR_HDRLEN, peer_name, peer_len);
 
 	return nl_send_recv_ack(nlfd, buf, msg_len);
@@ -801,5 +823,55 @@ out:
 	if (orig_ns >= 0)
 		close(orig_ns);
 
+	return ret;
+}
+
+/*
+ * Synchronous slave teardown — see header for rationale.
+ */
+int erlkoenig_netcfg_teardown_slave(int netns_fd, const char *ifname)
+{
+	int orig_ns = -1;
+	int nlfd = -1;
+	int ret = 0;
+
+	if (netns_fd < 0 || ifname == NULL || ifname[0] == '\0')
+		return -EINVAL;
+
+	orig_ns = open("/proc/self/ns/net", O_RDONLY | O_CLOEXEC);
+	if (orig_ns < 0) {
+		ret = -errno;
+		LOG_SYSCALL("open(/proc/self/ns/net)");
+		goto out;
+	}
+
+	if (setns(netns_fd, CLONE_NEWNET)) {
+		ret = -errno;
+		LOG_SYSCALL("setns(child_netns for teardown)");
+		goto out;
+	}
+
+	nlfd = nl_open();
+	if (nlfd < 0) {
+		ret = -errno;
+		LOG_SYSCALL("nl_open (teardown)");
+		goto out_restore;
+	}
+
+	/* nl_delete_link already returns 0 on ENODEV (already-gone) */
+	ret = nl_delete_link(nlfd, ifname);
+	if (ret && ret != -ENODEV)
+		LOG_ERR("netcfg: teardown slave %s failed: %s", ifname,
+			strerror(-ret));
+
+out_restore:
+	if (setns(orig_ns, CLONE_NEWNET))
+		LOG_SYSCALL("setns(restore after teardown)");
+
+out:
+	if (nlfd >= 0)
+		close(nlfd);
+	if (orig_ns >= 0)
+		close(orig_ns);
 	return ret;
 }

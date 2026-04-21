@@ -15,13 +15,13 @@
  */
 
 /*
- * fuzz_kill_parser.c — libFuzzer target for ek_parse_cmd_kill.
+ * fuzz_resize_parser.c — libFuzzer target for ek_parse_cmd_resize.
  *
  * Build:
  *   clang -fsanitize=fuzzer,address,undefined -g \
  *     -I include -D_GNU_SOURCE \
- *     test/fuzz/fuzz_kill_parser.c src/ek_protocol.c \
- *     -o fuzz_kill
+ *     test/fuzz/fuzz_resize_parser.c src/ek_protocol.c \
+ *     -o fuzz_resize
  */
 
 #include <stddef.h>
@@ -31,14 +31,15 @@
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-	uint8_t signal_out = 0;
-	int ret = ek_parse_cmd_kill(data, size, &signal_out);
+	uint16_t rows = 0;
+	uint16_t cols = 0;
+	int ret = ek_parse_cmd_resize(data, size, &rows, &cols);
 
 	if (ret > 0)
 		__builtin_trap();
 
-	/* If success, signal must be in (0, 64] by contract. */
-	if (ret == 0 && (signal_out == 0 || signal_out > 64))
+	/* On success, both dimensions must be > 0. */
+	if (ret == 0 && (rows == 0 || cols == 0))
 		__builtin_trap();
 
 	return 0;

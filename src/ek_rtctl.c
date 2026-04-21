@@ -234,26 +234,61 @@ static void print_reply(const uint8_t *buf, ssize_t n)
 
 /* --- commands --- */
 
+/*
+ * parse_memory - Parse a human-readable memory size like "256M" or
+ * "2G".  Accepts plain bytes, or K/M/G suffixes (case-insensitive).
+ * Rejects unknown suffixes and overflow by calling exit(2) — this
+ * is a CLI tool, a silent-accept would hand a wrong byte count to
+ * the runtime (e.g. "10T" → 10 bytes).
+ *
+ * Returns the size in bytes.
+ */
 static uint64_t parse_memory(const char *s)
 {
 	char *end;
 	unsigned long long v = strtoull(s, &end, 10);
+	unsigned long long mul = 1;
 
 	switch (*end) {
+	case '\0':
+		mul = 1;
+		break;
 	case 'G':
 	case 'g':
-		v *= 1024 * 1024 * 1024;
+		mul = 1024ULL * 1024 * 1024;
+		if (end[1] != '\0' && !(end[1] == 'B' || end[1] == 'b'))
+			goto bad;
 		break;
 	case 'M':
 	case 'm':
-		v *= 1024 * 1024;
+		mul = 1024ULL * 1024;
+		if (end[1] != '\0' && !(end[1] == 'B' || end[1] == 'b'))
+			goto bad;
 		break;
 	case 'K':
 	case 'k':
-		v *= 1024;
+		mul = 1024ULL;
+		if (end[1] != '\0' && !(end[1] == 'B' || end[1] == 'b'))
+			goto bad;
 		break;
+	default:
+		goto bad;
 	}
-	return (uint64_t)v;
+
+	/* Overflow check: v * mul must fit in uint64_t. */
+	if (v != 0 && mul > UINT64_MAX / v) {
+		fprintf(stderr,
+			"ek_rtctl: memory value overflows uint64: %s\n", s);
+		exit(2);
+	}
+	return (uint64_t)(v * mul);
+
+bad:
+	fprintf(stderr,
+		"ek_rtctl: invalid memory size '%s' "
+		"(expected N, NK, NM or NG)\n",
+		s);
+	exit(2);
 }
 
 static int cmd_spawn(int fd, int argc, char **argv)

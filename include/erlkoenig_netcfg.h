@@ -80,4 +80,29 @@ int erlkoenig_netcfg_veth_destroy(const char *host_ifname);
 int erlkoenig_netcfg_setup(pid_t child_pid, const char *ifname, uint32_t ip,
 			   uint8_t prefixlen, uint32_t gateway);
 
+/*
+ * erlkoenig_netcfg_teardown_slave - Synchronously delete a netlink link
+ *                                    inside a saved child netns.
+ * @netns_fd:	Open file descriptor referring to the child's network
+ *              namespace (e.g. from open("/proc/<pid>/ns/net", ...)).
+ * @ifname:	Interface name to delete inside that netns.
+ *
+ * Enters the netns via setns(), issues RTM_DELLINK with NLM_F_ACK, and
+ * waits for the kernel ACK before returning.  This gives callers a
+ * hard synchronization point: on return, the IPVLAN slave is gone
+ * from the kernel's perspective — the parent dummy is immediately
+ * free to accept a replacement slave with the same or a different
+ * address.
+ *
+ * Purpose:  close the EADDRINUSE race in pod-supervisor respawn for
+ * :one_for_all / :rest_for_one pods.  Without this sync point, the
+ * dying container's slave is cleaned up asynchronously by the kernel
+ * when its netns ref drops, and a respawn in the same supervisor
+ * tick trips `ip addr add` with -EADDRINUSE.
+ *
+ * Returns 0 on success (including "already gone"), negative errno
+ * on failure.  On failure, the caller's netns is always restored.
+ */
+int erlkoenig_netcfg_teardown_slave(int netns_fd, const char *ifname);
+
 #endif /* ERLKOENIG_NETCFG_H */
