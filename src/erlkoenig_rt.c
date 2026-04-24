@@ -1817,12 +1817,28 @@ static void dispatch_command(const uint8_t *buf, size_t len)
 	}
 
 	uint8_t tag = buf[0];
-	/* uint8_t ver = buf[1]; — available for per-command versioning */
+	uint8_t ver = buf[1];
 	const uint8_t *payload = buf + 2;
 	size_t payload_len = len - 2;
 
+	/*
+	 * Per-command version check. The handshake already negotiated
+	 * ERLKOENIG_PROTOCOL_VERSION for the session, but the BEAM side
+	 * tags every command with its own version byte. Accept only the
+	 * handshake version — silently accepting other values would let
+	 * a drift between BEAM and C ship without either side noticing.
+	 * Explicit -EPROTO means the caller gets a clean protocol_error
+	 * to propagate instead of a malformed payload parse later on.
+	 */
+	if (ver != ERLKOENIG_PROTOCOL_VERSION) {
+		LOG_ERR("dispatch: tag=0x%02X rejected, ver=%u expected %u",
+			tag, ver, ERLKOENIG_PROTOCOL_VERSION);
+		send_reply_error(-EPROTO, "unsupported protocol version");
+		return;
+	}
+
 	LOG_DBG("received tag=0x%02X (%s) ver=%u payload=%zu bytes", tag,
-		erlkoenig_tag_name(tag), buf[1], payload_len);
+		erlkoenig_tag_name(tag), ver, payload_len);
 
 	switch (tag) {
 	case ERLKOENIG_TAG_CMD_SPAWN:
