@@ -134,7 +134,11 @@ int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch, size_t batch_len)
 	/* Set recv timeout to avoid hanging on missing ACKs */
 	tv.tv_sec = 5;
 	tv.tv_usec = 0;
-	setsockopt(nlfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	if (setsockopt(nlfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))) {
+		ret = -(int)errno;
+		LOG_SYSCALL("nft: setsockopt(SO_RCVTIMEO)");
+		goto out_restore;
+	}
 
 	/* Send the pre-built batch (atomic nft transaction) */
 	sent = sendto(nlfd, batch, batch_len, 0, (struct sockaddr *)&addr,
