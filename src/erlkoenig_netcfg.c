@@ -634,11 +634,14 @@ int erlkoenig_netcfg_veth_create(pid_t child_pid, const char *host_ifname,
 		close(child_nlfd);
 	child_nlfd = -1;
 
-	/* Restore host netns */
+	/* Restore host netns — hard-fail: runtime stuck in child netns
+	 * cannot reliably operate on host interfaces, AND seccomp denies
+	 * unshare so we cannot even escape via new-ns creation. */
 	if (setns(orig_ns, CLONE_NEWNET)) {
-		ret = -errno;
-		LOG_SYSCALL("setns(restore after rename)");
-		goto out_del;
+		LOG_ERR("FATAL: setns(restore after rename) failed: %s — "
+			"exiting rather than serving from wrong netns",
+			strerror(errno));
+		_exit(1);
 	}
 
 	/* Configure host side: add IP, set UP */
@@ -683,8 +686,11 @@ int erlkoenig_netcfg_veth_create(pid_t child_pid, const char *host_ifname,
 	goto out;
 
 out_restore:
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("setns(restore)");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: setns(restore) failed: %s — exiting",
+			strerror(errno));
+		_exit(1);
+	}
 
 out_del:
 	if (ret)
@@ -829,8 +835,11 @@ int erlkoenig_netcfg_setup(pid_t child_pid, const char *ifname, uint32_t ip,
 
 out_restore:
 	/* Restore original network namespace */
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("setns(restore)");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: setns(restore) failed: %s — exiting",
+			strerror(errno));
+		_exit(1);
+	}
 
 out:
 	if (nlfd >= 0)
@@ -882,8 +891,12 @@ int erlkoenig_netcfg_teardown_slave(int netns_fd, const char *ifname)
 			strerror(-ret));
 
 out_restore:
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("setns(restore after teardown)");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: setns(restore after teardown) failed: %s "
+			"— exiting rather than serving from wrong netns",
+			strerror(errno));
+		_exit(1);
+	}
 
 out:
 	if (nlfd >= 0)
