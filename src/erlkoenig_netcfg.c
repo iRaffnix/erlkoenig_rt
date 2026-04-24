@@ -71,7 +71,24 @@ static inline void nl_put_attr_hdr(void *buf, size_t off, uint16_t len,
 
 static int nl_open(void)
 {
-	return socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	if (fd < 0)
+		return -1;
+	/*
+	 * Set a generous recv timeout. Without this, a dropped kernel reply
+	 * (SO_RCVBUF overflow, kernel OOM, adversarial flood of foreign
+	 * netlink traffic) wedges recv() forever and deadlocks the whole
+	 * runtime. nft.c already does the same for its NETFILTER socket.
+	 */
+	struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))) {
+		int e = errno;
+		LOG_ERR("nl_open: setsockopt(SO_RCVTIMEO): %s", strerror(e));
+		close(fd);
+		errno = e;
+		return -1;
+	}
+	return fd;
 }
 
 /*
