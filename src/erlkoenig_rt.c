@@ -1013,8 +1013,13 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 				   (mode_t)mode);
 			if (fd < 0) {
 				int e = errno;
-				mount(NULL, "/", NULL,
-				      MS_REMOUNT | MS_RDONLY | MS_BIND, NULL);
+				if (mount(NULL, "/", NULL,
+					  MS_REMOUNT | MS_RDONLY | MS_BIND,
+					  NULL))
+					LOG_ERR("remount-ro after open-fail "
+						"FAILED: %s — container "
+						"rootfs left writable",
+						strerror(errno));
 				if (fchdir(orig_root_fd) || chroot("."))
 					LOG_ERR(
 					    "FATAL: cannot restore root: %s",
@@ -1037,9 +1042,15 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 						continue;
 					int e = errno;
 					close(fd);
-					mount(NULL, "/", NULL,
-					      MS_REMOUNT | MS_RDONLY | MS_BIND,
-					      NULL);
+					if (mount(NULL, "/", NULL,
+						  MS_REMOUNT | MS_RDONLY |
+						      MS_BIND,
+						  NULL))
+						LOG_ERR("remount-ro after "
+							"write-fail FAILED: "
+							"%s — container "
+							"rootfs left writable",
+							strerror(errno));
 					if (fchdir(orig_root_fd) || chroot("."))
 						LOG_ERR("FATAL: cannot restore "
 							"root: %s",
@@ -1060,12 +1071,19 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		 * Restore read-only rootfs.  On failure we log and proceed
 		 * to the chroot/setns restore — a stuck RW remount is bad
 		 * but a stuck chroot is worse (we'd operate on container
-		 * root for every subsequent request).
+		 * root for every subsequent request). BUT we remember the
+		 * failure and surface it to the caller below: the operator
+		 * declared this container as read-only-rootfs, so a silently
+		 * writable rootfs is a security-posture break they must see.
 		 */
+		int ro_restore_err = 0;
 		if (mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY | MS_BIND,
-			  NULL))
-			LOG_ERR("remount ro after write_file: %s",
+			  NULL)) {
+			ro_restore_err = errno;
+			LOG_ERR("remount ro after write_file: %s — container "
+				"rootfs left writable",
 				strerror(errno));
+		}
 
 		/*
 		 * Restore original root and mount namespace.  A failure here
@@ -1083,6 +1101,13 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 			LOG_ERR("FATAL: cannot restore mount namespace: %s",
 				strerror(errno));
 			_exit(1);
+		}
+
+		if (ro_restore_err) {
+			send_reply_error(-ro_restore_err,
+					 "rootfs left writable after write_file "
+					 "— RO-remount failed");
+			return;
 		}
 	}
 

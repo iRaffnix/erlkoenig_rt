@@ -734,15 +734,18 @@ static int prepare_rootfs_erofs(const char *rootfs,
 			_cleanup_close_ int fd =
 			    ek_openat2(rfd, "etc/resolv.conf",
 				       O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
-			if (fd >= 0) {
-				char resolv[48];
-				uint8_t *ip = (uint8_t *)&opts->dns_ip;
-				snprintf(resolv, sizeof(resolv),
-					 "nameserver %u.%u.%u.%u\n", ip[0],
-					 ip[1], ip[2], ip[3]);
-				if (write(fd, resolv, strlen(resolv)) < 0)
-					LOG_WARN("write(resolv.conf): %s",
-						 strerror(errno));
+			if (fd < 0) {
+				LOG_SYSCALL("openat2(etc/resolv.conf)");
+				return -errno;
+			}
+			char resolv[48];
+			uint8_t *ip = (uint8_t *)&opts->dns_ip;
+			snprintf(resolv, sizeof(resolv),
+				 "nameserver %u.%u.%u.%u\n", ip[0], ip[1],
+				 ip[2], ip[3]);
+			if (write(fd, resolv, strlen(resolv)) < 0) {
+				LOG_SYSCALL("write(resolv.conf)");
+				return -errno;
 			}
 		}
 	}
