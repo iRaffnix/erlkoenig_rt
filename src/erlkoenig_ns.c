@@ -1042,11 +1042,21 @@ int ek_mask_paths(void)
 		 */
 		if (mount("/dev/null", masked_paths[i], NULL,
 			  MS_BIND | MS_RDONLY, NULL) == 0) {
-			/* Remount bind read-only (best-effort) */
-			mount(NULL, masked_paths[i], NULL,
-			      MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID |
-				  MS_NODEV | MS_NOEXEC,
-			      NULL);
+			/*
+			 * Remount to apply NOSUID/NODEV/NOEXEC on top of the
+			 * bind — MS_BIND alone carries the source's per-mount
+			 * flags, so without this the mask has weaker flags
+			 * than intended. RDONLY on /dev/null already blocks
+			 * kernel-memory reads via /proc/kcore etc., so a
+			 * remount failure is a hardening gap (log, continue)
+			 * not a full security hole.
+			 */
+			if (mount(NULL, masked_paths[i], NULL,
+				  MS_REMOUNT | MS_BIND | MS_RDONLY |
+				      MS_NOSUID | MS_NODEV | MS_NOEXEC,
+				  NULL))
+				LOG_WARN("mount(mask remount %s): %s",
+					 masked_paths[i], strerror(errno));
 			continue;
 		}
 		if (errno == ENOENT || errno == EACCES)
