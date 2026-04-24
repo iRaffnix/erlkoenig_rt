@@ -162,8 +162,12 @@ int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch, size_t batch_len)
 	}
 
 out_restore:
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("nft: setns(restore) CRITICAL");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: nft setns(restore) failed: %s — exiting "
+			"rather than serving from child netns",
+			strerror(errno));
+		_exit(1);
+	}
 out:
 	if (nlfd >= 0)
 		close(nlfd);
