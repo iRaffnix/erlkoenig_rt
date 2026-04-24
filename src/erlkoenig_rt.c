@@ -383,10 +383,25 @@ static void handle_cmd_spawn(const uint8_t *payload, size_t len)
 					 opts.memory_max, opts.pids_max,
 					 opts.cpu_weight, g_state.cgroup_path,
 					 sizeof(g_state.cgroup_path));
-		if (ret)
-			LOG_WARN("cgroup setup failed: %s (continuing "
-				 "without limits)",
-				 strerror(-ret));
+		if (ret) {
+			/*
+			 * memory.max and pids.max are security boundaries —
+			 * if the caller asked for them and we couldn't apply
+			 * them, the container must not spawn. cpu.weight is
+			 * QoS-only; cg_setup keeps that a warning internally
+			 * and returns 0, so any non-zero ret here means a
+			 * hard limit couldn't be enforced.
+			 */
+			LOG_ERR("cgroup setup failed: %s — killing child",
+				strerror(-ret));
+			ct_kill(SIGKILL);
+			while (ct_waitpid(NULL, 0) < 0 && errno == EINTR)
+				;
+			erlkoenig_cleanup(&g_state.ct);
+			g_state.state = STATE_IDLE;
+			send_reply_error((int32_t)ret, strerror(-ret));
+			return;
+		}
 
 		/* Auto-start BPF metrics if cgroup exists */
 		if (g_state.cgroup_path[0] != '\0') {
