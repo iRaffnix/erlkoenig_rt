@@ -30,7 +30,9 @@
  *     LD_PRELOAD=./ek_fault_shim.so ./test_container_setup
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,10 +53,13 @@ static int target_errno = ENOMEM;
 static int log_enabled;
 static const char *target_path_substr;
 
+/* n_close was historically declared but the shim has no close()
+ * interposer — close is safe to keep un-intercepted. Dropped here
+ * so -Wunused-variable stays clean under a stricter CFLAGS setup. */
 #define CTR(sc) static atomic_long n_##sc
 CTR(mount); CTR(umount2); CTR(mkdir); CTR(chdir); CTR(symlink);
 CTR(unshare); CTR(setns); CTR(prctl); CTR(rmdir); CTR(open);
-CTR(openat); CTR(close); CTR(pivot_root); CTR(clone3);
+CTR(openat); CTR(pivot_root); CTR(clone3);
 CTR(sendto); CTR(recvfrom); CTR(send); CTR(recv); CTR(ioctl);
 #undef CTR
 
@@ -166,9 +171,12 @@ int open(const char *path, int flags, ...)
 	}
 	if (path_matches(path) && should_fail("open", &n_open)) {
 		if (log_enabled)
+			/* open()'s glibc prototype marks path as nonnull; no
+			 * "(null)" guard needed — if path is NULL the caller
+			 * already broke the contract before we got here. */
 			fprintf(stderr,
 				"[FAULT] errno=%d injected on open path=%s\n",
-				target_errno, path ? path : "(null)");
+				target_errno, path);
 		errno = target_errno;
 		return -1;
 	}
