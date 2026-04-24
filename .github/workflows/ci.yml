@@ -7,6 +7,96 @@ on:
     branches: [main]
 
 jobs:
+  # ── Wire-Protocol Change Gate (SPEC-PROTO-001 policy) ───────────
+  # Sibling of the same gate in the erlkoenig (BEAM) repo. If a PR
+  # touches the C-side wire-protocol files the author must either
+  # (a) update/add golden vectors in erlkoenigin, or (b) explicitly
+  # justify with a bypass token in the PR body. Lessons from the
+  # REPLY_STATUS TLV drift and handshake-on-reconnect bugs.
+  wire-protocol-gate:
+    name: Wire-Protocol Change Gate
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect wire-protocol changes
+        id: detect
+        run: |
+          BASE='${{ github.event.pull_request.base.sha }}'
+          HEAD='${{ github.event.pull_request.head.sha }}'
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD")
+          echo "Files changed in this PR:"
+          echo "$CHANGED"
+          echo
+          # Regex matches the C side of the wire protocol.
+          # The Erlang side (apps/erlkoenig/src/erlkoenig_proto.erl etc.)
+          # is enforced by the same gate in the erlkoenig repo.
+          WIRE_RE='^src/ek_protocol\.c$|^include/erlkoenig_proto\.h$|^include/erlkoenig_tlv\.h$'
+          if echo "$CHANGED" | grep -qE "$WIRE_RE"; then
+            echo "wire_changed=true" >> "$GITHUB_OUTPUT"
+            echo "Matched wire-protocol files:"
+            echo "$CHANGED" | grep -E "$WIRE_RE"
+          else
+            echo "wire_changed=false" >> "$GITHUB_OUTPUT"
+            echo "No wire-protocol files touched — gate passes trivially."
+          fi
+
+      - name: Enforce vector-update discipline
+        if: steps.detect.outputs.wire_changed == 'true'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          echo
+          echo "============================================================"
+          echo "  WIRE-PROTOCOL CHANGE DETECTED (C side)"
+          echo "============================================================"
+          echo
+          echo "This PR modifies files that define the BEAM <-> C wire"
+          echo "protocol. Per SPEC-PROTO-001 and ADR-0021, every such"
+          echo "change MUST be paired with a golden-vector update in"
+          echo "the erlkoenigin repo under:"
+          echo
+          echo "    erlkoenigin/specs/protocol/vectors/v1/"
+          echo
+          echo "Why: the REPLY_STATUS TLV drift (fixed in erlkoenig"
+          echo "commit e08c8b8) and handshake-on-reconnect bug (e2de0ee)"
+          echo "were BOTH invisible because Erlang-encoder and C-parser"
+          echo "drifted apart without any cross-repo test catching it."
+          echo
+          echo "What to do:"
+          echo "  1. Add or update .bin + .expected.term vectors that"
+          echo "     cover the new/changed wire shape. The canonical"
+          echo "     way to generate them is an emit helper built on"
+          echo "     libekproto — or, until SPEC-RT-006 lands, by hand"
+          echo "     with a short printf \\xNN script and hexdump -C"
+          echo "     for inspection."
+          echo "  2. Open a companion PR on erlkoenigin with those files"
+          echo "     and link it in this PR's description."
+          echo "  3. Verify with the Erlang-side golden runner:"
+          echo "     ERLKOENIG_PROTOCOL_VECTORS=<path> \\"
+          echo "       rebar3 eunit --module=erlkoenig_proto_golden_tests"
+          echo
+          echo "Bypass (document-only):"
+          echo "  For trivial changes (comment-only, whitespace, a pure"
+          echo "  rename that preserves wire semantics) add a line to"
+          echo "  the PR body:"
+          echo
+          echo "    [wire-gate: bypass <short reason>]"
+          echo
+          echo "============================================================"
+          echo
+          if echo "$PR_BODY" | grep -qE '\[wire-gate:\s*bypass[^]]+\]'; then
+            BYPASS=$(echo "$PR_BODY" | grep -oE '\[wire-gate:\s*bypass[^]]+\]' | head -1)
+            echo "Bypass token detected: $BYPASS"
+            echo "Gate passed via documented exception."
+            exit 0
+          fi
+          echo "::error::Wire-protocol file touched without golden vector update or bypass token"
+          exit 1
+
   build:
     runs-on: ubuntu-24.04
     steps:
