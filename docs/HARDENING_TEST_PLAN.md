@@ -295,7 +295,7 @@ Recommended manual minimization pattern:
 
 ```sh
 mkdir -p /tmp/ek-corpus-min
-build-san/fuzz_spawn -merge=1 /tmp/ek-corpus-min test/fuzz/corpus /tmp/new-corpus
+build-fuzz/fuzz_spawn -merge=1 /tmp/ek-corpus-min test/fuzz/corpus /tmp/new-corpus
 ```
 
 Review minimized corpus changes like source code: small, intentional, and tied
@@ -303,24 +303,24 @@ to a parser behavior or a fixed crash.
 
 ## Fuzzer Crash Artifacts
 
-Run fuzzers from `build-san/fuzz-crashes/` so libFuzzer writes crash artifacts
+Run fuzzers from `build-fuzz/fuzz-crashes/` so libFuzzer writes crash artifacts
 there instead of polluting the repository root.
 
 Reproduce a crash with:
 
 ```sh
-build-san/fuzz_spawn build-san/fuzz-crashes/crash-<sha>
-build-san/fuzz_kill build-san/fuzz-crashes/crash-<sha>
-build-san/fuzz_net_setup build-san/fuzz-crashes/crash-<sha>
-build-san/fuzz_resize build-san/fuzz-crashes/crash-<sha>
+build-fuzz/fuzz_spawn build-fuzz/fuzz-crashes/crash-<sha>
+build-fuzz/fuzz_kill build-fuzz/fuzz-crashes/crash-<sha>
+build-fuzz/fuzz_net_setup build-fuzz/fuzz-crashes/crash-<sha>
+build-fuzz/fuzz_resize build-fuzz/fuzz-crashes/crash-<sha>
 ```
 
 After triage:
 
-- Keep the crash file in `build-san/fuzz-crashes/` while debugging.
+- Keep the crash file in `build-fuzz/fuzz-crashes/` while debugging.
 - Minimize it before committing.
 - Commit the minimized reproducer into `test/fuzz/corpus/` only after the fix.
-- Do not commit `build-san/fuzz-crashes/`.
+- Do not commit `build-fuzz/fuzz-crashes/`.
 
 ## Finding Records
 
