@@ -1,5 +1,6 @@
 build/
 build-san/
+build-fuzz/
 build-test/
 build-tidy/
 build-analyzer/
