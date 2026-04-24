@@ -1827,11 +1827,19 @@ int erlkoenig_spawn(const struct erlkoenig_spawn_opts *opts,
 	/*
 	 * Create temp directory for rootfs. The actual rootfs setup
 	 * (mount tmpfs, devices, etc.) happens inside the child.
+	 *
+	 * On failure we MUST goto out_cleanup_rootfs — in image mode we
+	 * already pre-attached the EROFS image to /dev/loopN above. A bare
+	 * return here would leave the loop device attached, leaking host
+	 * resources on every failed spawn (kernel has a finite loop-device
+	 * pool). ek_mkdtemp_rootfs leaves the rootfs buffer holding the
+	 * unexpanded template, so the cleanup's rmdir() is a safe no-op.
 	 */
 	ret = ek_mkdtemp_rootfs(rootfs, sizeof(rootfs));
 	if (ret) {
 		LOG_ERR("mkdtemp_rootfs failed: %s", strerror(-ret));
-		return ret;
+		rootfs[0] = '\0'; /* don't rmdir a half-printed template */
+		goto out_cleanup_rootfs;
 	}
 	snprintf(ct->rootfs_path, sizeof(ct->rootfs_path), "%s", rootfs);
 
