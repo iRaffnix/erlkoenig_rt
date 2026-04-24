@@ -1336,8 +1336,17 @@ static int apply_landlock_container(void)
 		}
 	}
 
-	/* NO_NEW_PRIVS already set by cap drop — but be safe */
-	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	/*
+	 * NO_NEW_PRIVS is already set by erlkoenig_drop_caps (which is
+	 * called before this function and checks its own prctl result).
+	 * We re-assert it here because Landlock's man page documents it
+	 * as a hard precondition for LANDLOCK_RESTRICT_SELF. If the flag
+	 * is already on, this second call is a no-op; if it somehow went
+	 * off, this restores it before the restrict call fails harder.
+	 */
+	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+		LOG_WARN("prctl(NO_NEW_PRIVS) before landlock: %s",
+			 strerror(errno));
 
 	if (syscall(SYS_landlock_restrict_self, ruleset_fd, 0)) {
 		LOG_WARN("landlock_restrict_self: %s", strerror(errno));

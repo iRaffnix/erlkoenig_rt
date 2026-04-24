@@ -459,10 +459,21 @@ static void harden_runtime_after_go(void)
 		},
 	};
 
-	if (syscall(SYS_capset, &hdr, data))
-		LOG_WARN("runtime capset(CAP_KILL only): %s", strerror(errno));
-	else
-		LOG_INFO("runtime capabilities reduced to CAP_KILL only");
+	/*
+	 * HARD FAIL on capset drop: this is the entire point of
+	 * harden_runtime_after_go. If we cannot drop to CAP_KILL only, the
+	 * runtime keeps CAP_SYS_ADMIN / CAP_DAC_OVERRIDE / CAP_NET_ADMIN /
+	 * CAP_SYS_PTRACE etc. Any subsequent bug in command parsing would
+	 * then give a remote caller full host privileges. Exiting is safer
+	 * than serving requests under unintended privilege.
+	 */
+	if (syscall(SYS_capset, &hdr, data)) {
+		LOG_ERR("runtime capset(CAP_KILL only) failed: %s — exiting "
+			"rather than serving with elevated caps",
+			strerror(errno));
+		_exit(2);
+	}
+	LOG_INFO("runtime capabilities reduced to CAP_KILL only");
 
 	/*
 	 * Phase 2.1: Landlock filesystem restriction.
@@ -612,9 +623,19 @@ static void harden_runtime_after_go(void)
 	    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
 	};
 
+	/*
+	 * HARD FAIL on these two: we've just dropped caps above, so without
+	 * seccomp the runtime has CAP_KILL but full syscall table — any bug
+	 * gives an attacker many kill/open/mmap/bpf paths to abuse. The
+	 * seccomp filter needs NO_NEW_PRIVS set first (we lack CAP_SYS_ADMIN
+	 * now), so a NO_NEW_PRIVS failure effectively disables the filter.
+	 * Same reasoning as the capset hard-fail above.
+	 */
 	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
-		LOG_WARN("runtime NO_NEW_PRIVS: %s", strerror(errno));
-		return;
+		LOG_ERR("runtime NO_NEW_PRIVS failed: %s — exiting rather "
+			"than serving without seccomp",
+			strerror(errno));
+		_exit(2);
 	}
 
 	struct sock_fprog prog = {
@@ -623,11 +644,13 @@ static void harden_runtime_after_go(void)
 	    .filter = runtime_filter,
 	};
 
-	if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog))
-		LOG_WARN("runtime seccomp: %s", strerror(errno));
-	else
-		LOG_INFO("runtime seccomp filter installed (%u instructions)",
-			 prog.len);
+	if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)) {
+		LOG_ERR("runtime seccomp install failed: %s — exiting",
+			strerror(errno));
+		_exit(2);
+	}
+	LOG_INFO("runtime seccomp filter installed (%u instructions)",
+		 prog.len);
 }
 
 static void handle_cmd_go(void)
