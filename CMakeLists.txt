@@ -348,6 +348,73 @@ if(ERLKOENIG_BUILD_FUZZ)
 endif()
 
 # ---------------------------------------------------------------------------
+# Boundary probes (defensive container-escape boundary verification)
+# ---------------------------------------------------------------------------
+# Each probe is a small statically-linked container workload that asserts
+# a single boundary property (cap dropped, syscall denied, path masked,
+# ...) and exits cleanly when the boundary holds. If a forbidden operation
+# succeeds, the probe prints a FINDING line and exits non-zero.
+#
+# Probes are spawned by erlkoenig_rt under a representative hardening
+# profile via the test/boundary/run_boundary_probes.sh harness.
+option(ERLKOENIG_BUILD_BOUNDARY "Build defensive container-boundary probes" OFF)
+
+if(ERLKOENIG_BUILD_BOUNDARY)
+    file(GLOB BOUNDARY_PROBE_SOURCES
+        RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/test/boundary"
+        "${CMAKE_CURRENT_SOURCE_DIR}/test/boundary/probe_*.c"
+    )
+
+    foreach(probe_src ${BOUNDARY_PROBE_SOURCES})
+        get_filename_component(probe_name "${probe_src}" NAME_WE)
+        add_executable(${probe_name} test/boundary/${probe_src})
+        target_include_directories(${probe_name} PRIVATE
+            test/boundary
+        )
+        target_compile_definitions(${probe_name} PRIVATE _GNU_SOURCE)
+        target_compile_options(${probe_name} PRIVATE
+            -Wall -Wextra -O2 -g
+        )
+        target_link_options(${probe_name} PRIVATE -static)
+
+        # Pick up linux/ uapi headers when building under musl-gcc, same
+        # way the main runtime does (CMakeLists.txt:118–123).
+        if(DEFINED MUSL_KERNEL_HEADERS)
+            target_compile_options(${probe_name} PRIVATE
+                "SHELL:-idirafter ${MUSL_KERNEL_HEADERS}"
+                "SHELL:-idirafter ${MUSL_ARCH_HEADERS}"
+            )
+        endif()
+
+        set_target_properties(${probe_name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test/boundary"
+        )
+    endforeach()
+
+    list(LENGTH BOUNDARY_PROBE_SOURCES BOUNDARY_PROBE_COUNT)
+    message(STATUS "Boundary probes enabled: ${BOUNDARY_PROBE_COUNT} probe(s)")
+
+    # Single-connection probe driver — speaks the wire protocol
+    # directly so the SPAWN→GO→WATCH lifecycle stays on one socket
+    # connection. Mitigates the buffered-REPLY_EXITED race documented
+    # in test/boundary/run_probe_one.c.
+    add_executable(run_probe_one test/boundary/run_probe_one.c)
+    target_include_directories(run_probe_one PRIVATE include)
+    target_compile_definitions(run_probe_one PRIVATE _GNU_SOURCE)
+    target_compile_options(run_probe_one PRIVATE -Wall -Wextra -O2 -g)
+    target_link_options(run_probe_one PRIVATE -static)
+    if(DEFINED MUSL_KERNEL_HEADERS)
+        target_compile_options(run_probe_one PRIVATE
+            "SHELL:-idirafter ${MUSL_KERNEL_HEADERS}"
+            "SHELL:-idirafter ${MUSL_ARCH_HEADERS}"
+        )
+    endif()
+    set_target_properties(run_probe_one PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test/boundary"
+    )
+endif()
+
+# ---------------------------------------------------------------------------
 # Install targets
 # ---------------------------------------------------------------------------
 install(TARGETS erlkoenig_rt ek_rtctl

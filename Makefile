@@ -6,7 +6,8 @@
 
 .PHONY: all test test-rt clean install uninstall help \
         configure-san configure-fuzz debug-test fault-shim \
-        fault-smoke path-sweep fuzz-smoke
+        fault-smoke path-sweep fuzz-smoke \
+        configure-boundary boundary-probes
 
 # ── Build ────────────────────────────────────────────────
 
@@ -90,6 +91,23 @@ fuzz-smoke: configure-fuzz ## Short parser fuzz runs under libFuzzer
 	cd build-fuzz/fuzz-crashes && ../fuzz_net_setup -max_total_time=10 -max_len=1024  ../../test/fuzz/corpus
 	cd build-fuzz/fuzz-crashes && ../fuzz_resize    -max_total_time=10 -max_len=128   ../../test/fuzz/corpus
 
+# ── Boundary probes (defensive container-escape verification) ─
+#
+# A separate build dir (build-boundary) is used so the static-musl
+# release build (build/) is not contaminated with the probe targets.
+# The probes themselves are statically linked, like testbins.
+
+configure-boundary:    ## Configure boundary-probe build (once)
+	@test -f build-boundary/CMakeCache.txt || cmake -B build-boundary \
+		-DCMAKE_C_COMPILER=musl-gcc \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DERLKOENIG_BUILD_BOUNDARY=ON \
+		-DERLKOENIG_BUILD_TESTBIN=ON
+
+boundary-probes: configure-boundary  ## Build + run defensive boundary probes (sudo)
+	cmake --build build-boundary -j$$(nproc)
+	sudo ./test/boundary/run_boundary_probes.sh build-boundary
+
 # ── Static Analysis ──────────────────────────────────────
 
 lint: fmt-check        ## Static analysis
@@ -113,7 +131,7 @@ bench: all             ## Benchmark container startup
 # ── Clean ────────────────────────────────────────────────
 
 clean:                 ## Remove build artifacts
-	rm -rf build/ build-san/ build-fuzz/ build-test/ build-tidy/
+	rm -rf build/ build-san/ build-fuzz/ build-test/ build-tidy/ build-boundary/
 
 # ── Help ─────────────────────────────────────────────────
 
