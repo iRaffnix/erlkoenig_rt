@@ -400,8 +400,8 @@ static int ek_validate_dest_path(const char *dest)
  * them on a remount. The subset mirrors what crun and util-linux
  * consider "per-mount" security flags.
  */
-#define EK_REMOUNT_FLAGS                                                   \
-	(MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME |       \
+#define EK_REMOUNT_FLAGS                                                       \
+	(MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME |           \
 	 MS_NODIRATIME | MS_RELATIME | MS_STRICTATIME)
 
 /*
@@ -444,8 +444,7 @@ static unsigned long propagation_to_ms(uint8_t prop)
  *
  * Returns 0 on success, negative errno on failure.
  */
-int ek_bind_mount_volume(const char *rootfs,
-			 const struct erlkoenig_volume *vol)
+int ek_bind_mount_volume(const char *rootfs, const struct erlkoenig_volume *vol)
 {
 	/* rootfs prefix + dest — see ek_mkdir_p for the same rationale. */
 	char target[ERLKOENIG_MAX_PATH + ERLKOENIG_ROOTFS_MAX];
@@ -562,8 +561,8 @@ int ek_bind_mount_volume(const char *rootfs,
 		}
 	}
 
-	LOG_INFO("volume mounted: %s -> %s%s (flags=0x%x prop=%u%s)",
-		 source, rootfs, dest, flags, vol->propagation,
+	LOG_INFO("volume mounted: %s -> %s%s (flags=0x%x prop=%u%s)", source,
+		 rootfs, dest, flags, vol->propagation,
 		 vol->recursive ? " rec" : "");
 	return 0;
 }
@@ -890,9 +889,8 @@ static int prepare_rootfs_in_child(const char *rootfs,
 
 		char resolv[48];
 		uint8_t *ip = (uint8_t *)&opts->dns_ip;
-		snprintf(resolv, sizeof(resolv),
-			 "nameserver %u.%u.%u.%u\n", ip[0], ip[1],
-			 ip[2], ip[3]);
+		snprintf(resolv, sizeof(resolv), "nameserver %u.%u.%u.%u\n",
+			 ip[0], ip[1], ip[2], ip[3]);
 
 		if (write(fd, resolv, strlen(resolv)) < 0) {
 			LOG_SYSCALL("write(resolv.conf)");
@@ -1052,8 +1050,8 @@ int ek_mask_paths(void)
 			 * not a full security hole.
 			 */
 			if (mount(NULL, masked_paths[i], NULL,
-				  MS_REMOUNT | MS_BIND | MS_RDONLY |
-				      MS_NOSUID | MS_NODEV | MS_NOEXEC,
+				  MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID |
+				      MS_NODEV | MS_NOEXEC,
 				  NULL))
 				LOG_WARN("mount(mask remount %s): %s",
 					 masked_paths[i], strerror(errno));

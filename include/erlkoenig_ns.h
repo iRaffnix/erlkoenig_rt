@@ -39,8 +39,8 @@
 #define ERLKOENIG_MAX_ENV	 128
 #define ERLKOENIG_NETNS_PATH_LEN 64
 
-#define ERLKOENIG_MAX_VOLUMES	  16
-#define ERLKOENIG_MAX_MOUNT_DATA  256 /* fs-specific passthrough data */
+#define ERLKOENIG_MAX_VOLUMES	 16
+#define ERLKOENIG_MAX_MOUNT_DATA 256 /* fs-specific passthrough data */
 
 /*
  * Legacy semantic bit — still honoured so a `read_only:` boolean

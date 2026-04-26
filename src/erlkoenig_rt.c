@@ -129,7 +129,7 @@ static struct {
 	 * a replacement on the same parent dummy.  Closes the EADDRINUSE
 	 * race for :one_for_all / :rest_for_one pod strategies.
 	 */
-	int container_netns_fd;	           /* Open fd to container's netns */
+	int container_netns_fd;		    /* Open fd to container's netns */
 	char container_ifname[IF_NAMESIZE]; /* Slave ifname inside that netns */
 } g_state;
 
@@ -332,7 +332,6 @@ static int send_reply_status(uint8_t state, uint32_t pid, uint64_t uptime_ms)
  * test/fuzz link against the exact same code paths that ship in
  * production. Do NOT inline parsers back here.
  */
-
 
 /*
  * handle_cmd_spawn - Create a new container.
@@ -715,7 +714,6 @@ static void handle_cmd_go(void)
 	send_reply_ok(NULL, 0);
 }
 
-
 static void handle_cmd_kill(const uint8_t *payload, size_t len)
 {
 	uint8_t signal_num;
@@ -792,13 +790,13 @@ static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
 		snprintf(ns_path, sizeof(ns_path), "/proc/%d/ns/net",
 			 (int)g_state.ct.child_pid);
 		g_state.container_netns_fd =
-			open(ns_path, O_RDONLY | O_CLOEXEC);
+		    open(ns_path, O_RDONLY | O_CLOEXEC);
 		if (g_state.container_netns_fd < 0)
 			LOG_WARN("NET_SETUP: cannot open %s for later "
-				 "teardown: %s", ns_path, strerror(errno));
+				 "teardown: %s",
+				 ns_path, strerror(errno));
 		/* Ifname copy, NUL-terminated */
-		strncpy(g_state.container_ifname, args.ifname,
-			IF_NAMESIZE - 1);
+		strncpy(g_state.container_ifname, args.ifname, IF_NAMESIZE - 1);
 		g_state.container_ifname[IF_NAMESIZE - 1] = '\0';
 	}
 
@@ -1093,8 +1091,9 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		 * supervisor will spawn a fresh runtime on the next request.
 		 */
 		if (fchdir(orig_root_fd) || chroot(".")) {
-			LOG_ERR("FATAL: cannot restore root after write_file: %s",
-				strerror(errno));
+			LOG_ERR(
+			    "FATAL: cannot restore root after write_file: %s",
+			    strerror(errno));
 			_exit(1);
 		}
 		if (setns(orig_mnt_fd, CLONE_NEWNS)) {
@@ -1104,9 +1103,10 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		}
 
 		if (ro_restore_err) {
-			send_reply_error(-ro_restore_err,
-					 "rootfs left writable after write_file "
-					 "— RO-remount failed");
+			send_reply_error(
+			    -ro_restore_err,
+			    "rootfs left writable after write_file "
+			    "— RO-remount failed");
 			return;
 		}
 	}
@@ -1533,12 +1533,10 @@ static void reap_child(void)
 	if (g_state.container_netns_fd >= 0 &&
 	    g_state.container_ifname[0] != '\0') {
 		int tdret = erlkoenig_netcfg_teardown_slave(
-				g_state.container_netns_fd,
-				g_state.container_ifname);
+		    g_state.container_netns_fd, g_state.container_ifname);
 		if (tdret && tdret != -ENODEV)
 			LOG_WARN("slave teardown %s failed: %s",
-				 g_state.container_ifname,
-				 strerror(-tdret));
+				 g_state.container_ifname, strerror(-tdret));
 		else
 			LOG_INFO("slave %s torn down before REPLY_EXITED",
 				 g_state.container_ifname);

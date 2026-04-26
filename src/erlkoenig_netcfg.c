@@ -412,10 +412,9 @@ static int nl_create_veth(int nlfd, const char *host_name,
 	off += host_ifname_sz;
 
 	/* -- IFLA_LINKINFO (NLA_F_NESTED) -- */
-	nl_put_attr_hdr(buf, off,
-			(uint16_t)(NL_ATTR_HDRLEN + info_kind_sz +
-				   info_data_sz),
-			IFLA_LINKINFO | NLA_F_NESTED);
+	nl_put_attr_hdr(
+	    buf, off, (uint16_t)(NL_ATTR_HDRLEN + info_kind_sz + info_data_sz),
+	    IFLA_LINKINFO | NLA_F_NESTED);
 	off += NL_ATTR_HDRLEN;
 
 	/* IFLA_INFO_KIND("veth") */
@@ -431,8 +430,7 @@ static int nl_create_veth(int nlfd, const char *host_name,
 
 	/* VETH_INFO_PEER (NLA_F_NESTED) */
 	nl_put_attr_hdr(buf, off,
-			(uint16_t)(NL_ATTR_HDRLEN +
-				   sizeof(struct ifinfomsg) +
+			(uint16_t)(NL_ATTR_HDRLEN + sizeof(struct ifinfomsg) +
 				   peer_ifname_sz),
 			1 | NLA_F_NESTED); /* VETH_INFO_PEER=1 */
 	off += NL_ATTR_HDRLEN;
