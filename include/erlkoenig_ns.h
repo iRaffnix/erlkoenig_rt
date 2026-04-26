@@ -17,10 +17,16 @@
 /*
  * erlkoenig_ns.h - Container namespace setup.
  *
- * Creates a child process in isolated USER/PID/NET/MNT/UTS/IPC/CGROUP
- * namespaces. uid_map/gid_map are written by the C runtime after
- * clone(). The child prepares the rootfs and waits for GO after
+ * Creates a child process in isolated PID/NET/MNT/UTS/IPC/CGROUP
+ * namespaces. The child prepares the rootfs and waits for GO after
  * network setup. Supports pipe mode and PTY mode for I/O.
+ *
+ * Note: erlkoenig does NOT use CLONE_NEWUSER (user namespaces). The
+ * isolation model relies on file capabilities + erlkoenig_drop_caps()
+ * + seccomp + Landlock instead of UID-mapping. See ns.c:143 for the
+ * design decision and SPEC-EK-021 / ADR-0018 for the rationale.
+ * Container UID 0 == host UID 0; the post-execve cap drop is what
+ * removes the privilege normally bound to UID 0.
  */
 
 #ifndef ERLKOENIG_NS_H

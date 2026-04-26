@@ -90,6 +90,7 @@
 #include <linux/seccomp.h>
 #include <linux/capability.h>
 #include <linux/landlock.h>
+#include <linux/openat2.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 
@@ -824,12 +825,108 @@ static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
 }
 
 /*
+ * write_file_safe_open - openat2-based path resolution for WRITE_FILE.
+ *
+ * Walks a relative path component-by-component using openat2 with
+ * RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH. Each intermediate directory
+ * is mkdirat'd-if-missing, then re-opened with the same resolve flags.
+ * If any component is a symlink (pre-existing or race-created), the
+ * walk fails with ELOOP. If any component would escape the root, it
+ * fails with EXDEV.
+ *
+ * The defense matters because the WRITE_FILE flow temporarily remounts
+ * the container rootfs read-write. A container process that places a
+ * symlink under /tmp pointing to /app could otherwise redirect an
+ * operator-issued WRITE_FILE to overwrite /app contents — silently
+ * sidestepping the read-only-rootfs contract. See finding G-06 in the
+ * threat model.
+ *
+ * Returns the open file fd on success, -errno on failure. Caller is
+ * responsible for close().
+ */
+static int write_file_safe_open(int root_fd, const char *rel_path,
+				mode_t mode)
+{
+	char buf[1024];
+	if (strlen(rel_path) >= sizeof(buf))
+		return -ENAMETOOLONG;
+	snprintf(buf, sizeof(buf), "%s", rel_path);
+
+	int dirfd = root_fd; /* not owned */
+	int owned = -1;
+	char *cursor = buf;
+
+	for (;;) {
+		char *slash = strchr(cursor, '/');
+		if (!slash) {
+			/* Final component: open as file, RESOLVE_NO_SYMLINKS
+			 * + RESOLVE_BENEATH ensure it cannot redirect via
+			 * symlink and cannot escape root. */
+			struct open_how how = {
+			    .flags = (uint64_t)(unsigned int)(O_CREAT |
+							      O_WRONLY |
+							      O_TRUNC |
+							      O_CLOEXEC),
+			    .mode = (uint64_t)mode,
+			    .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH,
+			};
+			int fd = (int)syscall(SYS_openat2, dirfd, cursor, &how,
+					      sizeof(how));
+			int saved = errno;
+			if (owned >= 0)
+				close(owned);
+			if (fd < 0) {
+				errno = saved;
+				return -saved;
+			}
+			return fd;
+		}
+		*slash = '\0';
+		if (cursor[0] == '\0') {
+			/* leading or doubled slash */
+			*slash = '/';
+			cursor = slash + 1;
+			continue;
+		}
+
+		/* Best-effort mkdir; ignore EEXIST. mkdirat does not follow
+		 * symlinks at the leaf — if cursor IS an existing symlink,
+		 * mkdirat returns EEXIST without creating anything, and the
+		 * subsequent openat2 will reject the symlink with ELOOP. */
+		mkdirat(dirfd, cursor, 0755);
+
+		struct open_how how = {
+		    .flags = (uint64_t)(unsigned int)(O_PATH | O_DIRECTORY |
+						      O_CLOEXEC),
+		    .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH,
+		};
+		int next = (int)syscall(SYS_openat2, dirfd, cursor, &how,
+					sizeof(how));
+		if (next < 0) {
+			int saved = errno;
+			if (owned >= 0)
+				close(owned);
+			return -saved;
+		}
+		if (owned >= 0)
+			close(owned);
+		owned = next;
+		dirfd = next;
+
+		*slash = '/';
+		cursor = slash + 1;
+	}
+}
+
+/*
  * handle_cmd_write_file - Write a file into the container rootfs.
  *
  * Wire: <<Path:str16, Mode:16, DataLen:32, Data/binary>>
  *
  * Path must be absolute, no ".." components, resolved relative
  * to the container rootfs. Missing parent directories are created.
+ * Path resolution refuses to follow symlinks (RESOLVE_NO_SYMLINKS)
+ * and refuses to escape the container root (RESOLVE_BENEATH).
  *
  * The child has already done pivot_root by the time this is called
  * (state CREATED = after spawn, before go). setns() into the child's
@@ -984,31 +1081,21 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		}
 
 		/*
-		 * Write the file using openat() relative to the container
-		 * root FD. The path is relative (strip leading /).
+		 * Write the file using a symlink-rejecting path walk.
+		 * write_file_safe_open creates parent dirs and opens the
+		 * leaf via openat2(RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH),
+		 * so a container-placed symlink under /tmp cannot redirect
+		 * the write to /app or any other path. See finding G-06.
 		 */
 		const char *rel_path = path + 1; /* skip leading / */
-
-		/* Create parent directories via mkdirat */
 		{
-			char dir[1024];
-
-			snprintf(dir, sizeof(dir), "%s", rel_path);
-			for (char *p = dir; *p; p++) {
-				if (*p == '/') {
-					*p = '\0';
-					mkdirat(container_root_fd, dir, 0755);
-					*p = '/';
-				}
+			int fd = write_file_safe_open(container_root_fd,
+						      rel_path, (mode_t)mode);
+			if (fd < 0) {
+				/* convert -errno to errno */
+				errno = -fd;
+				fd = -1;
 			}
-		}
-
-		/* Write file via openat */
-		{
-			int fd =
-			    openat(container_root_fd, rel_path,
-				   O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC,
-				   (mode_t)mode);
 			if (fd < 0) {
 				int e = errno;
 				if (mount(NULL, "/", NULL,
