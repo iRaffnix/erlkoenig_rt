@@ -8,6 +8,7 @@
  */
 
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #include <netpacket/packet.h>
 #include <linux/if_ether.h>
 
