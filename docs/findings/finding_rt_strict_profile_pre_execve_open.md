@@ -124,12 +124,40 @@ Less ideal because it widens the contract beyond "pure compute, 15
 syscalls". The point of STRICT is the small attack surface; adding
 6 more syscalls erodes that. Option B is preferred.
 
-### Recommended
+### Recommended (chosen and applied)
 
 Option B — reorder so seccomp install happens after open + Landlock
-setup. Plus: confirm `execveat` is reached via the AT_EMPTY_PATH
-path, OR ensure path-based `execve("/app", ...)` works under
-Landlock (the rule at ns.c:1342 should permit it).
+setup, immediately before execveat. Plus add `execveat` to STRICT
+and NETWORK allowlists. Implemented in commit 269c2db on branch
+`audit/container-boundary-001`:
+
+- `src/erlkoenig_ns.c` `child_init` — `apply_seccomp` block moved
+  from line ~1599 (before open) to immediately before `execveat`
+  call (after `ek_close_range_above`). Privilege has already been
+  dropped by `erlkoenig_drop_caps`, so the setup syscalls between
+  drop_caps and seccomp install are unprivileged and bounded by
+  DAC + Landlock.
+- `include/erlkoenig_seccomp.h` — `SYS_execveat` added to STRICT
+  (alongside `SYS_execve`) and to NETWORK. Bootstrap-only:
+  unreachable for re-exec inside STRICT (no clone/fork allowed).
+
+## Verification
+
+Vorher/Nachher gemessen am 2026-04-26 auf `erlkoenig-2`
+(kernel 6.12.74-cloud-amd64) mit dem `make boundary-probes`
+Sweep gegen *zwei* Builds:
+
+| Build | Source | PASS | FAIL | SKIP | FAILED probe |
+|-------|--------|------|------|------|--------------|
+| `build-prod` | `/opt/erlkoenig/rt/erlkoenig_rt` (deployed 2026-04-21) | 40 | 1 | 1 | `probe_seccomp_strict__positive_control` |
+| `build-boundary` | branch `audit/container-boundary-001` mit fix | 41 | 0 | 1 | — |
+
+Der Diff ist exakt diese Findung: ein Probe ändert sich von FAIL
+zu PASS, alle anderen 40 Boundary-Probes (caps, mount-NS,
+/proc-masks, net-NS, pid-NS, cgroup, Landlock, 15 DEFAULT-denials,
+4 STRICT-syscall-denials) passieren in beiden Builds identisch.
+Andere Boundaries bleiben intakt; der Fix repariert ausschließlich
+den STRICT-Setup-Pfad.
 
 ## Regression
 
@@ -138,14 +166,17 @@ make boundary-probes
 ```
 
 The `probe_seccomp_strict__positive_control` probe must report PASS
-(probe exits 0). Currently it FAILs with `term_signal=31`.
+(probe exits 0). Pre-fix it FAILs with `term_signal=31`. Post-fix
+(commit 269c2db) it PASSes.
 
-Also: any of the four other `probe_seccomp_strict__*` probes (which
-test individual denied syscalls) will pass as "killed by SIGSYS"
-under the current bug, but only because the runtime kills the
-process before it reaches the probe's syscall — they're confounded.
-After the fix they will only pass if the probe binary's syscall is
-actually denied by STRICT, not the runtime's setup.
+Also: the four other `probe_seccomp_strict__*` probes (which test
+individual denied syscalls) pass as "killed by SIGSYS" both pre-
+and post-fix, but for different reasons. Pre-fix: the runtime kills
+the process during setup before the probe's `socket()`/`openat()`/
+`bpf()`/`fork()` is even reached — confounded. Post-fix: the probe
+binary actually reaches its target syscall, which is then denied
+by STRICT — the assertion is real. The positive-control probe is
+the one that distinguishes the two regimes.
 
 ## Notes
 
@@ -154,4 +185,11 @@ This finding does not constitute a security regression — STRICT being
 constitute a usability regression: a documented profile cannot be
 used in production. The spec's acceptance criteria
 (SPEC-EK-021 §"Akzeptanzkriterien": "seccomp compute: socket() → SIGSYS")
-cannot be demonstrated end-to-end until this is fixed.
+could not be demonstrated end-to-end until this fix landed.
+
+Operational impact pre-fix: any container spawned with
+`sandbox: :compute` (or `seccomp_profile = 2` directly) on the
+deployed Apr-21 build dies with SIGSYS during setup. DEFAULT and
+NETWORK profiles are unaffected — their allowlists permit the
+runtime's pre-execve `open`/`openat` calls. Post-fix all three
+profiles are usable.
