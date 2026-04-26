@@ -844,8 +844,7 @@ static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
  * Returns the open file fd on success, -errno on failure. Caller is
  * responsible for close().
  */
-static int write_file_safe_open(int root_fd, const char *rel_path,
-				mode_t mode)
+static int write_file_safe_open(int root_fd, const char *rel_path, mode_t mode)
 {
 	char buf[1024];
 	if (strlen(rel_path) >= sizeof(buf))
@@ -863,10 +862,9 @@ static int write_file_safe_open(int root_fd, const char *rel_path,
 			 * + RESOLVE_BENEATH ensure it cannot redirect via
 			 * symlink and cannot escape root. */
 			struct open_how how = {
-			    .flags = (uint64_t)(unsigned int)(O_CREAT |
-							      O_WRONLY |
-							      O_TRUNC |
-							      O_CLOEXEC),
+			    .flags =
+				(uint64_t)(unsigned int)(O_CREAT | O_WRONLY |
+							 O_TRUNC | O_CLOEXEC),
 			    .mode = (uint64_t)mode,
 			    .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH,
 			};
@@ -900,8 +898,8 @@ static int write_file_safe_open(int root_fd, const char *rel_path,
 						      O_CLOEXEC),
 		    .resolve = RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH,
 		};
-		int next = (int)syscall(SYS_openat2, dirfd, cursor, &how,
-					sizeof(how));
+		int next =
+		    (int)syscall(SYS_openat2, dirfd, cursor, &how, sizeof(how));
 		if (next < 0) {
 			int saved = errno;
 			if (owned >= 0)
