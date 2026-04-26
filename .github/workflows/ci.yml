@@ -88,8 +88,12 @@ jobs:
           echo
           echo "============================================================"
           echo
-          if echo "$PR_BODY" | grep -qE '\[wire-gate:\s*bypass[^]]+\]'; then
-            BYPASS=$(echo "$PR_BODY" | grep -oE '\[wire-gate:\s*bypass[^]]+\]' | head -1)
+          # tr '\n' ' ' flattens newlines so a multi-line bypass token
+          # (operator wraps a long reason across two lines) is detected.
+          # grep is line-oriented by default and [^]] doesn't bridge \n.
+          BODY_FLAT=$(echo "$PR_BODY" | tr '\n' ' ')
+          if echo "$BODY_FLAT" | grep -qE '\[wire-gate:\s*bypass[^]]+\]'; then
+            BYPASS=$(echo "$BODY_FLAT" | grep -oE '\[wire-gate:\s*bypass[^]]+\]' | head -1)
             echo "Bypass token detected: $BYPASS"
             echo "Gate passed via documented exception."
             exit 0
