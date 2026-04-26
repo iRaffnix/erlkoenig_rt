@@ -96,6 +96,15 @@ static inline bool probe_has_cgroup_delegation(void)
 	if (nl)
 		*nl = '\0';
 
+	/* Mirror erlkoenig_cg_detect_base: strip trailing /init or /beam leaf,
+	 * so we probe the delegated parent (which is what the runtime uses). */
+	char *last_slash = strrchr(p, '/');
+	if (last_slash && last_slash != p) {
+		const char *tail = last_slash + 1;
+		if (strcmp(tail, "init") == 0 || strcmp(tail, "beam") == 0)
+			*last_slash = '\0';
+	}
+
 	char base[4096];
 	snprintf(base, sizeof(base), "/sys/fs/cgroup%s", p);
 

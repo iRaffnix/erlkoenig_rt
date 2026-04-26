@@ -140,6 +140,14 @@ if(NOT ERLKOENIG_SANITIZE)
         "SHELL:-idirafter ${MUSL_ARCH_HEADERS}"
     )
     target_link_options(ek_rtctl PRIVATE -static)
+else()
+    target_compile_options(ek_rtctl PRIVATE
+        -fsanitize=address,undefined
+        -fno-omit-frame-pointer
+    )
+    target_link_options(ek_rtctl PRIVATE
+        -fsanitize=address,undefined
+    )
 endif()
 
 # ---------------------------------------------------------------------------
@@ -175,8 +183,15 @@ if(ERLKOENIG_BUILD_GATEWAY)
         )
         target_link_options(gateway PRIVATE -static)
     else()
-        target_compile_options(gateway PRIVATE -fPIE)
-        target_link_options(gateway PRIVATE -pie)
+        target_compile_options(gateway PRIVATE
+            -fPIE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+        target_link_options(gateway PRIVATE
+            -pie
+            -fsanitize=address,undefined
+        )
     endif()
 
     set_target_properties(gateway PROPERTIES
@@ -257,11 +272,79 @@ if(ERLKOENIG_BUILD_TESTS)
         -Wall -Wextra -Wno-unused-parameter -g -O0
     )
 
+    if(ERLKOENIG_SANITIZE)
+        target_compile_options(test_container_setup PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+        target_link_options(test_container_setup PRIVATE
+            -fsanitize=address,undefined
+        )
+    endif()
+
     target_link_libraries(test_container_setup ${CHECK_LIBRARIES})
 
     set_target_properties(test_container_setup PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test"
     )
+endif()
+
+# ---------------------------------------------------------------------------
+# LD_PRELOAD fault-injection shim (for fault-smoke / path-sweep)
+# ---------------------------------------------------------------------------
+# The shim is not instrumented with ASan itself — it wraps glibc syscall
+# symbols via dlsym(RTLD_NEXT, …) and is LD_PRELOADed into an ASan-linked
+# binary. Linking it with ASan would double-instrument the interposers.
+option(ERLKOENIG_BUILD_FAULT_SHIM "Build LD_PRELOAD fault injector" OFF)
+
+if(ERLKOENIG_BUILD_FAULT_SHIM)
+    add_library(ek_fault_shim SHARED test/fault/ek_fault_shim.c)
+    target_compile_definitions(ek_fault_shim PRIVATE _GNU_SOURCE)
+    target_compile_options(ek_fault_shim PRIVATE
+        -Wall -Wextra -g -O0 -fPIC
+    )
+    target_link_libraries(ek_fault_shim dl)
+    set_target_properties(ek_fault_shim PROPERTIES
+        PREFIX ""
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# libFuzzer parser harnesses
+# ---------------------------------------------------------------------------
+# libFuzzer is Clang-only. The build-system integration lives in a
+# SEPARATE build directory (build-fuzz) so the main sanitizer build
+# (build-san) can use the default compiler. Enabling this option on a
+# non-Clang compiler is a hard error — we don't want silent skips.
+option(ERLKOENIG_BUILD_FUZZ "Build libFuzzer parser harnesses (Clang only)" OFF)
+
+if(ERLKOENIG_BUILD_FUZZ)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "ERLKOENIG_BUILD_FUZZ requires Clang (libFuzzer). "
+            "Configure with -DCMAKE_C_COMPILER=clang.")
+    endif()
+
+    foreach(fz spawn kill net_setup resize)
+        add_executable(fuzz_${fz}
+            test/fuzz/fuzz_${fz}_parser.c
+            src/ek_protocol.c
+        )
+        target_include_directories(fuzz_${fz} PRIVATE include)
+        target_compile_definitions(fuzz_${fz} PRIVATE _GNU_SOURCE)
+        target_compile_options(fuzz_${fz} PRIVATE
+            -fsanitize=fuzzer,address,undefined
+            -g -O1 -fno-omit-frame-pointer
+        )
+        target_link_options(fuzz_${fz} PRIVATE
+            -fsanitize=fuzzer,address,undefined
+        )
+        set_target_properties(fuzz_${fz} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        )
+    endforeach()
 endif()
 
 # ---------------------------------------------------------------------------

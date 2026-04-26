@@ -277,8 +277,8 @@ static uint64_t parse_memory(const char *s)
 
 	/* Overflow check: v * mul must fit in uint64_t. */
 	if (v != 0 && mul > UINT64_MAX / v) {
-		fprintf(stderr,
-			"ek_rtctl: memory value overflows uint64: %s\n", s);
+		fprintf(stderr, "ek_rtctl: memory value overflows uint64: %s\n",
+			s);
 		exit(2);
 	}
 	return (uint64_t)(v * mul);

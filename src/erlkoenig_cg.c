@@ -159,33 +159,43 @@ int erlkoenig_cg_setup(pid_t pid, const char *name, uint64_t memory_max,
 		return ret;
 	}
 
-	/* Set memory limit */
+	/*
+	 * Set memory and pids limits. These are SECURITY boundaries — if the
+	 * caller requested a limit and we cannot apply it, the caller gets a
+	 * hard error rather than a container without the declared guard-rail
+	 * (OOM / fork-bomb risk on the host). cpu.weight is QoS-only, so a
+	 * weight-set failure stays a warning.
+	 */
 	if (memory_max > 0) {
 		snprintf(knob, sizeof(knob), "%s/memory.max", cgroup_path_out);
 		snprintf(value, sizeof(value), "%llu",
 			 (unsigned long long)memory_max);
 		ret = write_file(knob, value);
-		if (ret)
-			LOG_WARN("cgroup: set memory.max=%s: %s", value,
-				 strerror(-ret));
-		else
-			LOG_INFO("cgroup: memory.max = %llu bytes",
-				 (unsigned long long)memory_max);
+		if (ret) {
+			LOG_ERR("cgroup: set memory.max=%s: %s", value,
+				strerror(-ret));
+			rmdir(cgroup_path_out);
+			cgroup_path_out[0] = '\0';
+			return ret;
+		}
+		LOG_INFO("cgroup: memory.max = %llu bytes",
+			 (unsigned long long)memory_max);
 	}
 
-	/* Set PID limit */
 	if (pids_max > 0) {
 		snprintf(knob, sizeof(knob), "%s/pids.max", cgroup_path_out);
 		snprintf(value, sizeof(value), "%u", pids_max);
 		ret = write_file(knob, value);
-		if (ret)
-			LOG_WARN("cgroup: set pids.max=%s: %s", value,
-				 strerror(-ret));
-		else
-			LOG_INFO("cgroup: pids.max = %u", pids_max);
+		if (ret) {
+			LOG_ERR("cgroup: set pids.max=%s: %s", value,
+				strerror(-ret));
+			rmdir(cgroup_path_out);
+			cgroup_path_out[0] = '\0';
+			return ret;
+		}
+		LOG_INFO("cgroup: pids.max = %u", pids_max);
 	}
 
-	/* Set CPU weight */
 	if (cpu_weight > 0) {
 		snprintf(knob, sizeof(knob), "%s/cpu.weight", cgroup_path_out);
 		snprintf(value, sizeof(value), "%u", cpu_weight);
@@ -221,9 +231,21 @@ void erlkoenig_cg_teardown(const char *cgroup_path)
 	if (!cgroup_path || cgroup_path[0] == '\0')
 		return;
 
-	/* Kill all processes in the cgroup */
+	/*
+	 * Kill all processes in the cgroup. If the write fails we log it
+	 * loudly: this is the mechanism that guarantees container shutdown
+	 * on teardown. A silent failure would leave container processes
+	 * running on the host while the orchestrator thinks the container
+	 * is gone (resource leak + possibly a stale attacker foothold).
+	 */
 	snprintf(knob, sizeof(knob), "%s/cgroup.kill", cgroup_path);
-	write_file(knob, "1");
+	{
+		int kret = write_file(knob, "1");
+		if (kret)
+			LOG_ERR("cgroup: kill %s: %s — container processes "
+				"may still be running",
+				cgroup_path, strerror(-kret));
+	}
 
 	/* Brief wait for processes to die (signal-safe) */
 	{

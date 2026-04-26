@@ -71,7 +71,24 @@ static inline void nl_put_attr_hdr(void *buf, size_t off, uint16_t len,
 
 static int nl_open(void)
 {
-	return socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+	if (fd < 0)
+		return -1;
+	/*
+	 * Set a generous recv timeout. Without this, a dropped kernel reply
+	 * (SO_RCVBUF overflow, kernel OOM, adversarial flood of foreign
+	 * netlink traffic) wedges recv() forever and deadlocks the whole
+	 * runtime. nft.c already does the same for its NETFILTER socket.
+	 */
+	struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))) {
+		int e = errno;
+		LOG_ERR("nl_open: setsockopt(SO_RCVTIMEO): %s", strerror(e));
+		close(fd);
+		errno = e;
+		return -1;
+	}
+	return fd;
 }
 
 /*
@@ -395,10 +412,9 @@ static int nl_create_veth(int nlfd, const char *host_name,
 	off += host_ifname_sz;
 
 	/* -- IFLA_LINKINFO (NLA_F_NESTED) -- */
-	nl_put_attr_hdr(buf, off,
-			(uint16_t)(NL_ATTR_HDRLEN + info_kind_sz +
-				   info_data_sz),
-			IFLA_LINKINFO | NLA_F_NESTED);
+	nl_put_attr_hdr(
+	    buf, off, (uint16_t)(NL_ATTR_HDRLEN + info_kind_sz + info_data_sz),
+	    IFLA_LINKINFO | NLA_F_NESTED);
 	off += NL_ATTR_HDRLEN;
 
 	/* IFLA_INFO_KIND("veth") */
@@ -414,8 +430,7 @@ static int nl_create_veth(int nlfd, const char *host_name,
 
 	/* VETH_INFO_PEER (NLA_F_NESTED) */
 	nl_put_attr_hdr(buf, off,
-			(uint16_t)(NL_ATTR_HDRLEN +
-				   sizeof(struct ifinfomsg) +
+			(uint16_t)(NL_ATTR_HDRLEN + sizeof(struct ifinfomsg) +
 				   peer_ifname_sz),
 			1 | NLA_F_NESTED); /* VETH_INFO_PEER=1 */
 	off += NL_ATTR_HDRLEN;
@@ -617,11 +632,14 @@ int erlkoenig_netcfg_veth_create(pid_t child_pid, const char *host_ifname,
 		close(child_nlfd);
 	child_nlfd = -1;
 
-	/* Restore host netns */
+	/* Restore host netns — hard-fail: runtime stuck in child netns
+	 * cannot reliably operate on host interfaces, AND seccomp denies
+	 * unshare so we cannot even escape via new-ns creation. */
 	if (setns(orig_ns, CLONE_NEWNET)) {
-		ret = -errno;
-		LOG_SYSCALL("setns(restore after rename)");
-		goto out_del;
+		LOG_ERR("FATAL: setns(restore after rename) failed: %s — "
+			"exiting rather than serving from wrong netns",
+			strerror(errno));
+		_exit(1);
 	}
 
 	/* Configure host side: add IP, set UP */
@@ -666,8 +684,11 @@ int erlkoenig_netcfg_veth_create(pid_t child_pid, const char *host_ifname,
 	goto out;
 
 out_restore:
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("setns(restore)");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: setns(restore) failed: %s — exiting",
+			strerror(errno));
+		_exit(1);
+	}
 
 out_del:
 	if (ret)
@@ -812,8 +833,11 @@ int erlkoenig_netcfg_setup(pid_t child_pid, const char *ifname, uint32_t ip,
 
 out_restore:
 	/* Restore original network namespace */
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("setns(restore)");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: setns(restore) failed: %s — exiting",
+			strerror(errno));
+		_exit(1);
+	}
 
 out:
 	if (nlfd >= 0)
@@ -865,8 +889,12 @@ int erlkoenig_netcfg_teardown_slave(int netns_fd, const char *ifname)
 			strerror(-ret));
 
 out_restore:
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("setns(restore after teardown)");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: setns(restore after teardown) failed: %s "
+			"— exiting rather than serving from wrong netns",
+			strerror(errno));
+		_exit(1);
+	}
 
 out:
 	if (nlfd >= 0)

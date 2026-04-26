@@ -129,7 +129,7 @@ static struct {
 	 * a replacement on the same parent dummy.  Closes the EADDRINUSE
 	 * race for :one_for_all / :rest_for_one pod strategies.
 	 */
-	int container_netns_fd;	           /* Open fd to container's netns */
+	int container_netns_fd;		    /* Open fd to container's netns */
 	char container_ifname[IF_NAMESIZE]; /* Slave ifname inside that netns */
 } g_state;
 
@@ -333,7 +333,6 @@ static int send_reply_status(uint8_t state, uint32_t pid, uint64_t uptime_ms)
  * production. Do NOT inline parsers back here.
  */
 
-
 /*
  * handle_cmd_spawn - Create a new container.
  *
@@ -383,10 +382,25 @@ static void handle_cmd_spawn(const uint8_t *payload, size_t len)
 					 opts.memory_max, opts.pids_max,
 					 opts.cpu_weight, g_state.cgroup_path,
 					 sizeof(g_state.cgroup_path));
-		if (ret)
-			LOG_WARN("cgroup setup failed: %s (continuing "
-				 "without limits)",
-				 strerror(-ret));
+		if (ret) {
+			/*
+			 * memory.max and pids.max are security boundaries —
+			 * if the caller asked for them and we couldn't apply
+			 * them, the container must not spawn. cpu.weight is
+			 * QoS-only; cg_setup keeps that a warning internally
+			 * and returns 0, so any non-zero ret here means a
+			 * hard limit couldn't be enforced.
+			 */
+			LOG_ERR("cgroup setup failed: %s — killing child",
+				strerror(-ret));
+			ct_kill(SIGKILL);
+			while (ct_waitpid(NULL, 0) < 0 && errno == EINTR)
+				;
+			erlkoenig_cleanup(&g_state.ct);
+			g_state.state = STATE_IDLE;
+			send_reply_error((int32_t)ret, strerror(-ret));
+			return;
+		}
 
 		/* Auto-start BPF metrics if cgroup exists */
 		if (g_state.cgroup_path[0] != '\0') {
@@ -444,10 +458,21 @@ static void harden_runtime_after_go(void)
 		},
 	};
 
-	if (syscall(SYS_capset, &hdr, data))
-		LOG_WARN("runtime capset(CAP_KILL only): %s", strerror(errno));
-	else
-		LOG_INFO("runtime capabilities reduced to CAP_KILL only");
+	/*
+	 * HARD FAIL on capset drop: this is the entire point of
+	 * harden_runtime_after_go. If we cannot drop to CAP_KILL only, the
+	 * runtime keeps CAP_SYS_ADMIN / CAP_DAC_OVERRIDE / CAP_NET_ADMIN /
+	 * CAP_SYS_PTRACE etc. Any subsequent bug in command parsing would
+	 * then give a remote caller full host privileges. Exiting is safer
+	 * than serving requests under unintended privilege.
+	 */
+	if (syscall(SYS_capset, &hdr, data)) {
+		LOG_ERR("runtime capset(CAP_KILL only) failed: %s — exiting "
+			"rather than serving with elevated caps",
+			strerror(errno));
+		_exit(2);
+	}
+	LOG_INFO("runtime capabilities reduced to CAP_KILL only");
 
 	/*
 	 * Phase 2.1: Landlock filesystem restriction.
@@ -597,9 +622,19 @@ static void harden_runtime_after_go(void)
 	    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
 	};
 
+	/*
+	 * HARD FAIL on these two: we've just dropped caps above, so without
+	 * seccomp the runtime has CAP_KILL but full syscall table — any bug
+	 * gives an attacker many kill/open/mmap/bpf paths to abuse. The
+	 * seccomp filter needs NO_NEW_PRIVS set first (we lack CAP_SYS_ADMIN
+	 * now), so a NO_NEW_PRIVS failure effectively disables the filter.
+	 * Same reasoning as the capset hard-fail above.
+	 */
 	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
-		LOG_WARN("runtime NO_NEW_PRIVS: %s", strerror(errno));
-		return;
+		LOG_ERR("runtime NO_NEW_PRIVS failed: %s — exiting rather "
+			"than serving without seccomp",
+			strerror(errno));
+		_exit(2);
 	}
 
 	struct sock_fprog prog = {
@@ -608,11 +643,13 @@ static void harden_runtime_after_go(void)
 	    .filter = runtime_filter,
 	};
 
-	if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog))
-		LOG_WARN("runtime seccomp: %s", strerror(errno));
-	else
-		LOG_INFO("runtime seccomp filter installed (%u instructions)",
-			 prog.len);
+	if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)) {
+		LOG_ERR("runtime seccomp install failed: %s — exiting",
+			strerror(errno));
+		_exit(2);
+	}
+	LOG_INFO("runtime seccomp filter installed (%u instructions)",
+		 prog.len);
 }
 
 static void handle_cmd_go(void)
@@ -676,7 +713,6 @@ static void handle_cmd_go(void)
 
 	send_reply_ok(NULL, 0);
 }
-
 
 static void handle_cmd_kill(const uint8_t *payload, size_t len)
 {
@@ -754,13 +790,13 @@ static void handle_cmd_net_setup(const uint8_t *payload, size_t len)
 		snprintf(ns_path, sizeof(ns_path), "/proc/%d/ns/net",
 			 (int)g_state.ct.child_pid);
 		g_state.container_netns_fd =
-			open(ns_path, O_RDONLY | O_CLOEXEC);
+		    open(ns_path, O_RDONLY | O_CLOEXEC);
 		if (g_state.container_netns_fd < 0)
 			LOG_WARN("NET_SETUP: cannot open %s for later "
-				 "teardown: %s", ns_path, strerror(errno));
+				 "teardown: %s",
+				 ns_path, strerror(errno));
 		/* Ifname copy, NUL-terminated */
-		strncpy(g_state.container_ifname, args.ifname,
-			IF_NAMESIZE - 1);
+		strncpy(g_state.container_ifname, args.ifname, IF_NAMESIZE - 1);
 		g_state.container_ifname[IF_NAMESIZE - 1] = '\0';
 	}
 
@@ -975,8 +1011,13 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 				   (mode_t)mode);
 			if (fd < 0) {
 				int e = errno;
-				mount(NULL, "/", NULL,
-				      MS_REMOUNT | MS_RDONLY | MS_BIND, NULL);
+				if (mount(NULL, "/", NULL,
+					  MS_REMOUNT | MS_RDONLY | MS_BIND,
+					  NULL))
+					LOG_ERR("remount-ro after open-fail "
+						"FAILED: %s — container "
+						"rootfs left writable",
+						strerror(errno));
 				if (fchdir(orig_root_fd) || chroot("."))
 					LOG_ERR(
 					    "FATAL: cannot restore root: %s",
@@ -999,9 +1040,15 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 						continue;
 					int e = errno;
 					close(fd);
-					mount(NULL, "/", NULL,
-					      MS_REMOUNT | MS_RDONLY | MS_BIND,
-					      NULL);
+					if (mount(NULL, "/", NULL,
+						  MS_REMOUNT | MS_RDONLY |
+						      MS_BIND,
+						  NULL))
+						LOG_ERR("remount-ro after "
+							"write-fail FAILED: "
+							"%s — container "
+							"rootfs left writable",
+							strerror(errno));
 					if (fchdir(orig_root_fd) || chroot("."))
 						LOG_ERR("FATAL: cannot restore "
 							"root: %s",
@@ -1022,12 +1069,19 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		 * Restore read-only rootfs.  On failure we log and proceed
 		 * to the chroot/setns restore — a stuck RW remount is bad
 		 * but a stuck chroot is worse (we'd operate on container
-		 * root for every subsequent request).
+		 * root for every subsequent request). BUT we remember the
+		 * failure and surface it to the caller below: the operator
+		 * declared this container as read-only-rootfs, so a silently
+		 * writable rootfs is a security-posture break they must see.
 		 */
+		int ro_restore_err = 0;
 		if (mount(NULL, "/", NULL, MS_REMOUNT | MS_RDONLY | MS_BIND,
-			  NULL))
-			LOG_ERR("remount ro after write_file: %s",
+			  NULL)) {
+			ro_restore_err = errno;
+			LOG_ERR("remount ro after write_file: %s — container "
+				"rootfs left writable",
 				strerror(errno));
+		}
 
 		/*
 		 * Restore original root and mount namespace.  A failure here
@@ -1037,14 +1091,23 @@ static void handle_cmd_write_file(const uint8_t *payload, size_t len)
 		 * supervisor will spawn a fresh runtime on the next request.
 		 */
 		if (fchdir(orig_root_fd) || chroot(".")) {
-			LOG_ERR("FATAL: cannot restore root after write_file: %s",
-				strerror(errno));
+			LOG_ERR(
+			    "FATAL: cannot restore root after write_file: %s",
+			    strerror(errno));
 			_exit(1);
 		}
 		if (setns(orig_mnt_fd, CLONE_NEWNS)) {
 			LOG_ERR("FATAL: cannot restore mount namespace: %s",
 				strerror(errno));
 			_exit(1);
+		}
+
+		if (ro_restore_err) {
+			send_reply_error(
+			    -ro_restore_err,
+			    "rootfs left writable after write_file "
+			    "— RO-remount failed");
+			return;
 		}
 	}
 
@@ -1470,12 +1533,10 @@ static void reap_child(void)
 	if (g_state.container_netns_fd >= 0 &&
 	    g_state.container_ifname[0] != '\0') {
 		int tdret = erlkoenig_netcfg_teardown_slave(
-				g_state.container_netns_fd,
-				g_state.container_ifname);
+		    g_state.container_netns_fd, g_state.container_ifname);
 		if (tdret && tdret != -ENODEV)
 			LOG_WARN("slave teardown %s failed: %s",
-				 g_state.container_ifname,
-				 strerror(-tdret));
+				 g_state.container_ifname, strerror(-tdret));
 		else
 			LOG_INFO("slave %s torn down before REPLY_EXITED",
 				 g_state.container_ifname);
@@ -1754,12 +1815,28 @@ static void dispatch_command(const uint8_t *buf, size_t len)
 	}
 
 	uint8_t tag = buf[0];
-	/* uint8_t ver = buf[1]; — available for per-command versioning */
+	uint8_t ver = buf[1];
 	const uint8_t *payload = buf + 2;
 	size_t payload_len = len - 2;
 
+	/*
+	 * Per-command version check. The handshake already negotiated
+	 * ERLKOENIG_PROTOCOL_VERSION for the session, but the BEAM side
+	 * tags every command with its own version byte. Accept only the
+	 * handshake version — silently accepting other values would let
+	 * a drift between BEAM and C ship without either side noticing.
+	 * Explicit -EPROTO means the caller gets a clean protocol_error
+	 * to propagate instead of a malformed payload parse later on.
+	 */
+	if (ver != ERLKOENIG_PROTOCOL_VERSION) {
+		LOG_ERR("dispatch: tag=0x%02X rejected, ver=%u expected %u",
+			tag, ver, ERLKOENIG_PROTOCOL_VERSION);
+		send_reply_error(-EPROTO, "unsupported protocol version");
+		return;
+	}
+
 	LOG_DBG("received tag=0x%02X (%s) ver=%u payload=%zu bytes", tag,
-		erlkoenig_tag_name(tag), buf[1], payload_len);
+		erlkoenig_tag_name(tag), ver, payload_len);
 
 	switch (tag) {
 	case ERLKOENIG_TAG_CMD_SPAWN:

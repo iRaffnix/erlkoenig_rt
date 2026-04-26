@@ -400,8 +400,8 @@ static int ek_validate_dest_path(const char *dest)
  * them on a remount. The subset mirrors what crun and util-linux
  * consider "per-mount" security flags.
  */
-#define EK_REMOUNT_FLAGS                                                   \
-	(MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME |       \
+#define EK_REMOUNT_FLAGS                                                       \
+	(MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOATIME |           \
 	 MS_NODIRATIME | MS_RELATIME | MS_STRICTATIME)
 
 /*
@@ -444,8 +444,7 @@ static unsigned long propagation_to_ms(uint8_t prop)
  *
  * Returns 0 on success, negative errno on failure.
  */
-int ek_bind_mount_volume(const char *rootfs,
-			 const struct erlkoenig_volume *vol)
+int ek_bind_mount_volume(const char *rootfs, const struct erlkoenig_volume *vol)
 {
 	/* rootfs prefix + dest — see ek_mkdir_p for the same rationale. */
 	char target[ERLKOENIG_MAX_PATH + ERLKOENIG_ROOTFS_MAX];
@@ -562,8 +561,8 @@ int ek_bind_mount_volume(const char *rootfs,
 		}
 	}
 
-	LOG_INFO("volume mounted: %s -> %s%s (flags=0x%x prop=%u%s)",
-		 source, rootfs, dest, flags, vol->propagation,
+	LOG_INFO("volume mounted: %s -> %s%s (flags=0x%x prop=%u%s)", source,
+		 rootfs, dest, flags, vol->propagation,
 		 vol->recursive ? " rec" : "");
 	return 0;
 }
@@ -734,15 +733,18 @@ static int prepare_rootfs_erofs(const char *rootfs,
 			_cleanup_close_ int fd =
 			    ek_openat2(rfd, "etc/resolv.conf",
 				       O_CREAT | O_WRONLY | O_CLOEXEC, 0644);
-			if (fd >= 0) {
-				char resolv[48];
-				uint8_t *ip = (uint8_t *)&opts->dns_ip;
-				snprintf(resolv, sizeof(resolv),
-					 "nameserver %u.%u.%u.%u\n", ip[0],
-					 ip[1], ip[2], ip[3]);
-				if (write(fd, resolv, strlen(resolv)) < 0)
-					LOG_WARN("write(resolv.conf): %s",
-						 strerror(errno));
+			if (fd < 0) {
+				LOG_SYSCALL("openat2(etc/resolv.conf)");
+				return -errno;
+			}
+			char resolv[48];
+			uint8_t *ip = (uint8_t *)&opts->dns_ip;
+			snprintf(resolv, sizeof(resolv),
+				 "nameserver %u.%u.%u.%u\n", ip[0], ip[1],
+				 ip[2], ip[3]);
+			if (write(fd, resolv, strlen(resolv)) < 0) {
+				LOG_SYSCALL("write(resolv.conf)");
+				return -errno;
 			}
 		}
 	}
@@ -887,9 +889,8 @@ static int prepare_rootfs_in_child(const char *rootfs,
 
 		char resolv[48];
 		uint8_t *ip = (uint8_t *)&opts->dns_ip;
-		snprintf(resolv, sizeof(resolv),
-			 "nameserver %u.%u.%u.%u\n", ip[0], ip[1],
-			 ip[2], ip[3]);
+		snprintf(resolv, sizeof(resolv), "nameserver %u.%u.%u.%u\n",
+			 ip[0], ip[1], ip[2], ip[3]);
 
 		if (write(fd, resolv, strlen(resolv)) < 0) {
 			LOG_SYSCALL("write(resolv.conf)");
@@ -1039,11 +1040,21 @@ int ek_mask_paths(void)
 		 */
 		if (mount("/dev/null", masked_paths[i], NULL,
 			  MS_BIND | MS_RDONLY, NULL) == 0) {
-			/* Remount bind read-only (best-effort) */
-			mount(NULL, masked_paths[i], NULL,
-			      MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID |
-				  MS_NODEV | MS_NOEXEC,
-			      NULL);
+			/*
+			 * Remount to apply NOSUID/NODEV/NOEXEC on top of the
+			 * bind — MS_BIND alone carries the source's per-mount
+			 * flags, so without this the mask has weaker flags
+			 * than intended. RDONLY on /dev/null already blocks
+			 * kernel-memory reads via /proc/kcore etc., so a
+			 * remount failure is a hardening gap (log, continue)
+			 * not a full security hole.
+			 */
+			if (mount(NULL, masked_paths[i], NULL,
+				  MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID |
+				      MS_NODEV | MS_NOEXEC,
+				  NULL))
+				LOG_WARN("mount(mask remount %s): %s",
+					 masked_paths[i], strerror(errno));
 			continue;
 		}
 		if (errno == ENOENT || errno == EACCES)
@@ -1336,8 +1347,17 @@ static int apply_landlock_container(void)
 		}
 	}
 
-	/* NO_NEW_PRIVS already set by cap drop — but be safe */
-	prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+	/*
+	 * NO_NEW_PRIVS is already set by erlkoenig_drop_caps (which is
+	 * called before this function and checks its own prctl result).
+	 * We re-assert it here because Landlock's man page documents it
+	 * as a hard precondition for LANDLOCK_RESTRICT_SELF. If the flag
+	 * is already on, this second call is a no-op; if it somehow went
+	 * off, this restores it before the restrict call fails harder.
+	 */
+	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
+		LOG_WARN("prctl(NO_NEW_PRIVS) before landlock: %s",
+			 strerror(errno));
 
 	if (syscall(SYS_landlock_restrict_self, ruleset_fd, 0)) {
 		LOG_WARN("landlock_restrict_self: %s", strerror(errno));
@@ -1805,11 +1825,19 @@ int erlkoenig_spawn(const struct erlkoenig_spawn_opts *opts,
 	/*
 	 * Create temp directory for rootfs. The actual rootfs setup
 	 * (mount tmpfs, devices, etc.) happens inside the child.
+	 *
+	 * On failure we MUST goto out_cleanup_rootfs — in image mode we
+	 * already pre-attached the EROFS image to /dev/loopN above. A bare
+	 * return here would leave the loop device attached, leaking host
+	 * resources on every failed spawn (kernel has a finite loop-device
+	 * pool). ek_mkdtemp_rootfs leaves the rootfs buffer holding the
+	 * unexpanded template, so the cleanup's rmdir() is a safe no-op.
 	 */
 	ret = ek_mkdtemp_rootfs(rootfs, sizeof(rootfs));
 	if (ret) {
 		LOG_ERR("mkdtemp_rootfs failed: %s", strerror(-ret));
-		return ret;
+		rootfs[0] = '\0'; /* don't rmdir a half-printed template */
+		goto out_cleanup_rootfs;
 	}
 	snprintf(ct->rootfs_path, sizeof(ct->rootfs_path), "%s", rootfs);
 

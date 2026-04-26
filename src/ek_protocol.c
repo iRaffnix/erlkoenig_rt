@@ -34,8 +34,8 @@
  * strbuf_copy - Copy a string into opts->strbuf, NUL-terminated.
  * Returns pointer to the copy, or NULL if the strbuf is full.
  */
-static char *strbuf_copy(struct erlkoenig_spawn_opts *opts,
-			 const uint8_t *data, size_t len)
+static char *strbuf_copy(struct erlkoenig_spawn_opts *opts, const uint8_t *data,
+			 size_t len)
 {
 	if (opts->strbuf_used + len + 1 > sizeof(opts->strbuf))
 		return NULL;
@@ -132,19 +132,19 @@ int ek_parse_cmd_spawn(const uint8_t *payload, size_t len,
 			 */
 			if (attr.len < EK_VOLUME_TLV_MIN)
 				return -EINVAL;
-			const uint8_t *sep1 = memchr(attr.value, '\0', attr.len);
+			const uint8_t *sep1 =
+			    memchr(attr.value, '\0', attr.len);
 			if (!sep1)
 				return -EINVAL;
 			size_t slen = (size_t)(sep1 - attr.value);
 			size_t after_src = slen + 1;
 			if (after_src >= attr.len)
 				return -EINVAL;
-			const uint8_t *sep2 = memchr(attr.value + after_src,
-						     '\0', attr.len - after_src);
+			const uint8_t *sep2 = memchr(
+			    attr.value + after_src, '\0', attr.len - after_src);
 			if (!sep2)
 				return -EINVAL;
-			size_t dlen =
-			    (size_t)(sep2 - (attr.value + after_src));
+			size_t dlen = (size_t)(sep2 - (attr.value + after_src));
 			size_t after_dst = after_src + dlen + 1;
 			/* Fixed header after the two NUL-terminated paths:
 			 * 4+4+1+1+2 = 12 bytes, then variable data. */
@@ -154,14 +154,12 @@ int ek_parse_cmd_spawn(const uint8_t *payload, size_t len,
 			    dlen >= ERLKOENIG_MAX_PATH - 1)
 				return -ENAMETOOLONG;
 			const uint8_t *hdr = attr.value + after_dst;
-			uint32_t flags = (uint32_t)hdr[0] << 24
-					 | (uint32_t)hdr[1] << 16
-					 | (uint32_t)hdr[2] << 8
-					 | (uint32_t)hdr[3];
-			uint32_t clear = (uint32_t)hdr[4] << 24
-					 | (uint32_t)hdr[5] << 16
-					 | (uint32_t)hdr[6] << 8
-					 | (uint32_t)hdr[7];
+			uint32_t flags =
+			    (uint32_t)hdr[0] << 24 | (uint32_t)hdr[1] << 16 |
+			    (uint32_t)hdr[2] << 8 | (uint32_t)hdr[3];
+			uint32_t clear =
+			    (uint32_t)hdr[4] << 24 | (uint32_t)hdr[5] << 16 |
+			    (uint32_t)hdr[6] << 8 | (uint32_t)hdr[7];
 			uint8_t prop = hdr[8];
 			uint8_t rec = hdr[9];
 			uint16_t data_len =
@@ -175,16 +173,16 @@ int ek_parse_cmd_spawn(const uint8_t *payload, size_t len,
 			uint8_t vi = opts->num_volumes;
 			memcpy(opts->volumes[vi].source, attr.value, slen);
 			opts->volumes[vi].source[slen] = '\0';
-			memcpy(opts->volumes[vi].dest,
-			       attr.value + after_src, dlen);
+			memcpy(opts->volumes[vi].dest, attr.value + after_src,
+			       dlen);
 			opts->volumes[vi].dest[dlen] = '\0';
 			opts->volumes[vi].flags = flags;
 			opts->volumes[vi].clear = clear;
 			opts->volumes[vi].propagation = prop;
 			opts->volumes[vi].recursive = rec;
 			if (data_len > 0)
-				memcpy(opts->volumes[vi].data,
-				       hdr + 12, data_len);
+				memcpy(opts->volumes[vi].data, hdr + 12,
+				       data_len);
 			opts->volumes[vi].data[data_len] = '\0';
 			opts->num_volumes++;
 			break;
@@ -219,8 +217,7 @@ int ek_parse_cmd_spawn(const uint8_t *payload, size_t len,
 	return 0;
 }
 
-int ek_parse_cmd_kill(const uint8_t *payload, size_t len,
-		      uint8_t *signal_out)
+int ek_parse_cmd_kill(const uint8_t *payload, size_t len, uint8_t *signal_out)
 {
 	struct erlkoenig_buf b;
 	struct ek_tlv attr;
@@ -286,8 +283,8 @@ int ek_parse_cmd_net_setup(const uint8_t *payload, size_t len,
 	return 0;
 }
 
-int ek_parse_cmd_resize(const uint8_t *payload, size_t len,
-			uint16_t *rows, uint16_t *cols)
+int ek_parse_cmd_resize(const uint8_t *payload, size_t len, uint16_t *rows,
+			uint16_t *cols)
 {
 	struct erlkoenig_buf b;
 	struct ek_tlv attr;

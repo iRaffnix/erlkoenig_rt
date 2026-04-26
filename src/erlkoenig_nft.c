@@ -134,7 +134,11 @@ int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch, size_t batch_len)
 	/* Set recv timeout to avoid hanging on missing ACKs */
 	tv.tv_sec = 5;
 	tv.tv_usec = 0;
-	setsockopt(nlfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	if (setsockopt(nlfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))) {
+		ret = -(int)errno;
+		LOG_SYSCALL("nft: setsockopt(SO_RCVTIMEO)");
+		goto out_restore;
+	}
 
 	/* Send the pre-built batch (atomic nft transaction) */
 	sent = sendto(nlfd, batch, batch_len, 0, (struct sockaddr *)&addr,
@@ -158,8 +162,12 @@ int erlkoenig_nft_apply(pid_t child_pid, const uint8_t *batch, size_t batch_len)
 	}
 
 out_restore:
-	if (setns(orig_ns, CLONE_NEWNET))
-		LOG_SYSCALL("nft: setns(restore) CRITICAL");
+	if (setns(orig_ns, CLONE_NEWNET)) {
+		LOG_ERR("FATAL: nft setns(restore) failed: %s — exiting "
+			"rather than serving from child netns",
+			strerror(errno));
+		_exit(1);
+	}
 out:
 	if (nlfd >= 0)
 		close(nlfd);

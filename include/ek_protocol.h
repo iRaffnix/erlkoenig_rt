@@ -89,8 +89,7 @@ int ek_parse_cmd_spawn(const uint8_t *payload, size_t len,
  * Returns 0 on success, -EINVAL on invalid/missing signal,
  * -EPROTO on unknown critical TLV.
  */
-int ek_parse_cmd_kill(const uint8_t *payload, size_t len,
-		      uint8_t *signal_out);
+int ek_parse_cmd_kill(const uint8_t *payload, size_t len, uint8_t *signal_out);
 
 /*
  * ek_parse_cmd_net_setup - Parse a NET_SETUP command payload.
@@ -108,8 +107,8 @@ int ek_parse_cmd_net_setup(const uint8_t *payload, size_t len,
  *
  * Returns 0 on success. -EINVAL if rows or cols is 0.
  */
-int ek_parse_cmd_resize(const uint8_t *payload, size_t len,
-			uint16_t *rows, uint16_t *cols);
+int ek_parse_cmd_resize(const uint8_t *payload, size_t len, uint16_t *rows,
+			uint16_t *cols);
 
 #ifdef __cplusplus
 }
