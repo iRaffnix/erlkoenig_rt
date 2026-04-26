@@ -1044,16 +1044,27 @@ int ek_mask_paths(void)
 			 * Remount to apply NOSUID/NODEV/NOEXEC on top of the
 			 * bind — MS_BIND alone carries the source's per-mount
 			 * flags, so without this the mask has weaker flags
-			 * than intended. RDONLY on /dev/null already blocks
-			 * kernel-memory reads via /proc/kcore etc., so a
-			 * remount failure is a hardening gap (log, continue)
-			 * not a full security hole.
+			 * than intended.
+			 *
+			 * Failure-mode rationale (gap G-04): the bind source
+			 * is /dev/null, a character device with no exec/suid
+			 * surface and which RDONLY-bound already blocks
+			 * kernel-memory reads via /proc/kcore-style files.
+			 * NOSUID/NODEV/NOEXEC on top of /dev/null is
+			 * defence-in-depth with no observable failure mode
+			 * on supported kernels — the only way this remount
+			 * fails is a kernel bug or an out-of-memory
+			 * condition, both of which would surface elsewhere.
+			 * Keep as LOG_WARN + continue, but explicit about
+			 * why a failure here is not a hole.
 			 */
 			if (mount(NULL, masked_paths[i], NULL,
 				  MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID |
 				      MS_NODEV | MS_NOEXEC,
 				  NULL))
-				LOG_WARN("mount(mask remount %s): %s",
+				LOG_WARN("mount(mask remount %s): %s — "
+					 "bind source is /dev/null, "
+					 "kernel-memory reads remain blocked",
 					 masked_paths[i], strerror(errno));
 			continue;
 		}
@@ -1299,11 +1310,34 @@ static void run_init(pid_t app_pid)
  */
 static int apply_landlock_container(void)
 {
+	/*
+	 * Failure-mode policy (gap G-01 in the threat model):
+	 *
+	 * - "Landlock not available" (ABI query returns ENOSYS or -1
+	 *   indicating the kernel doesn't support Landlock): graceful
+	 *   fallback per ADR-0018, return 0. Operator runs without
+	 *   Landlock. Caller sees success.
+	 *
+	 * - "Landlock available but setup failed" (any other error from
+	 *   create_ruleset / add_rule / restrict_self): return -errno.
+	 *   Caller fails the spawn. The container's declared FS-restriction
+	 *   contract has not been honored, so refusing to start is
+	 *   strictly safer than running silently un-restricted.
+	 */
+	errno = 0;
 	int abi = (int)syscall(SYS_landlock_create_ruleset, NULL, 0,
 			       LANDLOCK_CREATE_RULESET_VERSION);
 	if (abi < 0) {
-		LOG_INFO("Landlock: not available (kernel < 5.13), skipping");
-		return 0; /* graceful fallback */
+		if (errno == ENOSYS || errno == EOPNOTSUPP) {
+			LOG_INFO("Landlock: not available "
+				 "(kernel < 5.13), skipping");
+			return 0; /* graceful fallback */
+		}
+		/* Some other transient error from the ABI query — treat
+		 * as a setup failure, not as "not available". */
+		int saved = errno;
+		LOG_ERR("landlock ABI query failed: %s", strerror(errno));
+		return -saved;
 	}
 
 	__u64 fs_rights =
@@ -1327,8 +1361,9 @@ static int apply_landlock_container(void)
 	int ruleset_fd =
 	    (int)syscall(SYS_landlock_create_ruleset, &attr, sizeof(attr), 0);
 	if (ruleset_fd < 0) {
-		LOG_WARN("landlock_create_ruleset: %s", strerror(errno));
-		return 0; /* non-fatal */
+		int saved = errno;
+		LOG_ERR("landlock_create_ruleset: %s", strerror(errno));
+		return -saved;
 	}
 
 	/* Allow EXECUTE on /app — the container binary.
@@ -1355,14 +1390,19 @@ static int apply_landlock_container(void)
 	 * is already on, this second call is a no-op; if it somehow went
 	 * off, this restores it before the restrict call fails harder.
 	 */
-	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0))
-		LOG_WARN("prctl(NO_NEW_PRIVS) before landlock: %s",
-			 strerror(errno));
+	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) {
+		int saved = errno;
+		LOG_ERR("prctl(NO_NEW_PRIVS) before landlock: %s",
+			strerror(errno));
+		close(ruleset_fd);
+		return -saved;
+	}
 
 	if (syscall(SYS_landlock_restrict_self, ruleset_fd, 0)) {
-		LOG_WARN("landlock_restrict_self: %s", strerror(errno));
+		int saved = errno;
+		LOG_ERR("landlock_restrict_self: %s", strerror(errno));
 		close(ruleset_fd);
-		return 0; /* non-fatal */
+		return -saved;
 	}
 
 	close(ruleset_fd);
@@ -1593,10 +1633,6 @@ static int child_init(void *arg)
 
 		if (erlkoenig_drop_caps(opts->caps_keep))
 			_exit(126);
-		if (opts->seccomp_profile != SECCOMP_PROFILE_NONE) {
-			if (erlkoenig_apply_seccomp(opts->seccomp_profile))
-				_exit(126);
-		}
 
 		/* Open the app binary BEFORE Landlock activation.
 		 * O_PATH: reference only, no read permission needed.
@@ -1606,8 +1642,12 @@ static int child_init(void *arg)
 
 		/* NOW activate Landlock — deny all filesystem access.
 		 * Pre-opened FDs (stdin/stdout/stderr/pipes/app_fd) still work.
-		 * Non-fatal: graceful fallback on kernels < 5.13. */
-		apply_landlock_container();
+		 * Returns 0 on graceful fallback (kernel < 5.13) or success;
+		 * negative errno if the kernel supports Landlock but setup
+		 * failed — fail the spawn rather than run unprotected
+		 * (gap G-01 in the threat model). */
+		if (apply_landlock_container() < 0)
+			_exit(126);
 
 		if (ca->pty_slave >= 0) {
 			/* PTY mode: new session, controlling terminal */
@@ -1641,6 +1681,35 @@ static int child_init(void *arg)
 		 * works if execveat fails.
 		 */
 		ek_close_range_above(3);
+
+		/*
+		 * Install seccomp filter LAST, just before execveat.
+		 *
+		 * Earlier ordering had apply_seccomp BEFORE the open("/app",
+		 * O_PATH) and before all the dup2 / close_range / Landlock
+		 * setup syscalls.  Under STRICT (allowlist of ~30 syscalls),
+		 * those setup calls are not permitted, so the runtime's own
+		 * pre-execve setup was killed by SECCOMP_RET_KILL_PROCESS
+		 * before reaching execve.  Same issue under NETWORK
+		 * (allowlist) for any setup syscall not on the list.
+		 *
+		 * The filter is meant to constrain the *container workload*,
+		 * not the runtime's setup. Privilege has already been
+		 * removed by erlkoenig_drop_caps above, so the setup
+		 * syscalls between drop_caps and seccomp install are
+		 * unprivileged and bounded by the kernel's normal DAC/
+		 * Landlock checks. Installing the filter here, immediately
+		 * before execveat, gives the post-execve workload its full
+		 * intended boundary while letting the trusted runtime
+		 * complete setup.
+		 *
+		 * See finding_rt_strict_profile_pre_execve_open.md for the
+		 * original report and reproducer.
+		 */
+		if (opts->seccomp_profile != SECCOMP_PROFILE_NONE) {
+			if (erlkoenig_apply_seccomp(opts->seccomp_profile))
+				_exit(126);
+		}
 
 		/*
 		 * RT-003 §1.6: execveat(AT_EMPTY_PATH) — exec via FD.

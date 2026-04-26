@@ -133,8 +133,14 @@
 static struct sock_filter seccomp_strict[] = {
     SC_CHECK_ARCH,
     SC_LOAD_NR,
-    /* Bootstrap: needed for execve() + glibc/musl static init */
+    /* Bootstrap: needed for execve()/execveat() + glibc/musl static init.
+     * execveat is the runtime's preferred AT_EMPTY_PATH path (ns.c:1663),
+     * and execve is the fallback (ns.c:1677). Both are bootstrap-only —
+     * after the binary's main() runs, neither is reachable for re-exec
+     * inside STRICT (no clone/fork to gain a new exec target). */
     SC_JUMP_EQ(SYS_execve, 0, 1),
+    SC_ALLOW,
+    SC_JUMP_EQ(SYS_execveat, 0, 1),
     SC_ALLOW,
     SC_JUMP_EQ(SYS_arch_prctl, 0, 1),
     SC_ALLOW,
@@ -208,8 +214,11 @@ static struct sock_filter seccomp_strict[] = {
 static struct sock_filter seccomp_network[] = {
     SC_CHECK_ARCH,
     SC_LOAD_NR,
-    /* Bootstrap: needed for execve() + glibc/musl static init */
+    /* Bootstrap: needed for execve()/execveat() + glibc/musl static init.
+     * execveat is the runtime's AT_EMPTY_PATH bootstrap (ns.c:1663). */
     SC_JUMP_EQ(SYS_execve, 0, 1),
+    SC_ALLOW,
+    SC_JUMP_EQ(SYS_execveat, 0, 1),
     SC_ALLOW,
     SC_JUMP_EQ(SYS_arch_prctl, 0, 1),
     SC_ALLOW,
