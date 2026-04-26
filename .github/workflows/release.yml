@@ -9,7 +9,18 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    name: Build ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64-linux
+            runner: ubuntu-24.04
+            legacy_suffix: linux-amd64
+          - name: aarch64-linux
+            runner: ubuntu-22.04-arm
+            legacy_suffix: linux-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +42,8 @@ jobs:
       - name: Package
         run: |
           VERSION="${GITHUB_REF_NAME}"
+          TARGET="${{ matrix.target.name }}"
+          LEGACY_SUFFIX="${{ matrix.target.legacy_suffix }}"
           mkdir -p dist-out
 
           # Main binaries
@@ -44,21 +57,26 @@ jobs:
           cp -r dist/systemd dist-out/
           cp scripts/install.sh dist-out/
 
-          # Tarball
-          tar czf erlkoenig_rt-${VERSION}-linux-amd64.tar.gz -C dist-out .
+          # Canonical tarball name matches the erlkoenig release target scheme.
+          tar czf "erlkoenig_rt-${VERSION}-${TARGET}.tar.gz" -C dist-out .
 
-          # Standalone binaries for quick download
-          cp build/erlkoenig_rt erlkoenig_rt-linux-amd64
-          cp build/ek_rtctl ek_rtctl-linux-amd64
+          # Compatibility tarball for older installers that use linux-amd64 /
+          # linux-arm64 target names.
+          cp "erlkoenig_rt-${VERSION}-${TARGET}.tar.gz" \
+             "erlkoenig_rt-${VERSION}-${LEGACY_SUFFIX}.tar.gz"
+
+          # Standalone binaries for quick download and installer fallback.
+          cp build/erlkoenig_rt "erlkoenig_rt-${LEGACY_SUFFIX}"
+          cp build/ek_rtctl "ek_rtctl-${LEGACY_SUFFIX}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-linux-amd64
+          name: release-${{ matrix.target.name }}
           path: |
             erlkoenig_rt-*.tar.gz
-            erlkoenig_rt-linux-amd64
-            ek_rtctl-linux-amd64
+            erlkoenig_rt-${{ matrix.target.legacy_suffix }}
+            ek_rtctl-${{ matrix.target.legacy_suffix }}
 
   publish:
     name: Publish GitHub Release
@@ -79,5 +97,5 @@ jobs:
           generate_release_notes: true
           files: |
             artifacts/erlkoenig_rt-*.tar.gz
-            artifacts/erlkoenig_rt-linux-amd64
-            artifacts/ek_rtctl-linux-amd64
+            artifacts/erlkoenig_rt-linux-*
+            artifacts/ek_rtctl-linux-*

@@ -91,6 +91,23 @@ download() {
     fi
 }
 
+detect_target() {
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)  echo "x86_64-linux" ;;
+        aarch64|arm64) echo "aarch64-linux" ;;
+        *)             echo "Error: unsupported architecture: $arch" >&2; exit 1 ;;
+    esac
+}
+
+legacy_target() {
+    case "$1" in
+        x86_64-linux)  echo "linux-amd64" ;;
+        aarch64-linux) echo "linux-arm64" ;;
+        *)             echo "$1" ;;
+    esac
+}
+
 do_install() {
     # Resolve version
     if [ -z "$VERSION" ]; then
@@ -109,10 +126,16 @@ do_install() {
     # Download
     TMPDIR=$(mktemp -d)
     TARBALL="$TMPDIR/erlkoenig_rt.tar.gz"
-    URL="https://github.com/$REPO/releases/download/$VERSION/erlkoenig_rt-${VERSION}-linux-amd64.tar.gz"
+    TARGET=$(detect_target)
+    LEGACY_TARGET=$(legacy_target "$TARGET")
+    URL="https://github.com/$REPO/releases/download/$VERSION/erlkoenig_rt-${VERSION}-${TARGET}.tar.gz"
+    LEGACY_URL="https://github.com/$REPO/releases/download/$VERSION/erlkoenig_rt-${VERSION}-${LEGACY_TARGET}.tar.gz"
 
     echo "  downloading: $URL"
-    download "$URL" "$TARBALL"
+    if ! download "$URL" "$TARBALL"; then
+        echo "  canonical target unavailable, trying: $LEGACY_URL"
+        download "$LEGACY_URL" "$TARBALL"
+    fi
 
     # Extract
     tar xzf "$TARBALL" -C "$TMPDIR"
