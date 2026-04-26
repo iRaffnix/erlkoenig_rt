@@ -5,6 +5,7 @@ build-test/
 build-tidy/
 build-analyzer/
 build-check/
+build-boundary/
 bin/
 compile_commands.json
 # Fuzz corpus auto-generated files (keep only hand-written seeds)
